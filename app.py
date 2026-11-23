@@ -3,6 +3,7 @@
 
 import json
 
+import matplotlib.pyplot as plt
 import pandas as pd
 import streamlit as st
 
@@ -23,9 +24,7 @@ st.set_page_config(
 )
 
 st.title("🧬 BioDataLab")
-st.caption(
-    "Biological and Agricultural Data Analysis Platform"
-)
+st.caption("Biological and Agricultural Data Analysis Platform")
 
 st.sidebar.title("Analysis workspace")
 
@@ -40,9 +39,7 @@ uploaded_file = st.sidebar.file_uploader(
 # --------------------------------------------------
 
 if uploaded_file is None:
-    st.info(
-        "Upload a CSV or Excel file to begin your analysis."
-    )
+    st.info("Upload a CSV or Excel file to begin your analysis.")
 
     st.markdown("""
     ### Welcome to BioDataLab
@@ -51,6 +48,7 @@ if uploaded_file is None:
 
     - Dataset validation
     - Descriptive statistics
+    - Data distribution visualization
     - Outlier detection
     - Scientific analysis reports
     """)
@@ -81,7 +79,7 @@ st.success(f"Dataset loaded: {uploaded_file.name}")
 
 
 # --------------------------------------------------
-# Navigation tabs
+# Navigation
 # --------------------------------------------------
 
 tab_data, tab_stats, tab_outliers, tab_report = st.tabs([
@@ -162,11 +160,30 @@ with tab_stats:
             errors="coerce",
         ).dropna()
 
-        st.subheader("Value distribution")
+        st.subheader(f"Distribution of {selected_column}")
 
-        st.bar_chart(
-            values.value_counts().sort_index()
-        )
+        if values.empty:
+            st.warning("No valid numeric values are available.")
+
+        else:
+            fig, ax = plt.subplots(figsize=(9, 4))
+
+            ax.hist(
+                values,
+                bins="auto",
+                edgecolor="black",
+            )
+
+            ax.set_xlabel(selected_column)
+            ax.set_ylabel("Frequency")
+            ax.set_title(f"Distribution of {selected_column}")
+
+            ax.grid(axis="y", alpha=0.25)
+
+            fig.tight_layout()
+
+            st.pyplot(fig)
+            plt.close(fig)
 
 
 # --------------------------------------------------
@@ -202,15 +219,10 @@ with tab_outliers:
                     )
 
                     if result["count"]:
-                        st.write(
-                            "Indices:",
-                            result["indices"],
-                        )
-
-                        st.write(
-                            "Values:",
-                            result["values"],
-                        )
+                        st.write("Indices:", result["indices"])
+                        st.write("Values:", result["values"])
+                    else:
+                        st.success("No outliers detected.")
 
 
 # --------------------------------------------------
@@ -251,6 +263,4 @@ with tab_report:
             )
 
         except Exception as error:
-            st.error(
-                f"Report generation failed: {error}"
-            )
+            st.error(f"Report generation failed: {error}")
