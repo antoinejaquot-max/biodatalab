@@ -1,64 +1,98 @@
 
+"""Descriptive statistics for BioDataLab."""
+
+from dataclasses import dataclass
+
+import numpy as np
 import pandas as pd
-import pytest
-
-from biodatalab.statistics import (
-    analyze_column,
-    analyze_dataset,
-    calculate_iqr_outliers,
-    calculate_correlation,
-)
 
 
-def test_analyze_column():
-    series = pd.Series([1, 2, 3, 4, 5])
-
-    result = analyze_column(series)
-
-    assert result.count == 5
-    assert result.mean == 3.0
-    assert result.median == 3.0
-    assert result.minimum == 1.0
-    assert result.maximum == 5.0
-
-
-def test_analyze_dataset():
-    dataframe = pd.DataFrame({
-        "height": [10, 20, 30],
-        "weight": [2, 4, 6],
-    })
-
-    results = analyze_dataset(dataframe)
-
-    assert "height" in results
-    assert "weight" in results
-    assert results["height"].mean == 20.0
+@dataclass
+class ColumnStatistics:
+    count: int
+    missing: int
+    mean: float | None
+    median: float | None
+    std: float | None
+    minimum: float | None
+    maximum: float | None
+    q1: float | None
+    q3: float | None
 
 
-def test_iqr_outliers():
-    series = pd.Series([10, 11, 12, 13, 100])
+def analyze_column(series: pd.Series) -> ColumnStatistics:
+    numeric = pd.to_numeric(series, errors="coerce")
+    valid = numeric.dropna()
 
-    result = calculate_iqr_outliers(series)
+    if valid.empty:
+        return ColumnStatistics(
+            count=0,
+            missing=int(numeric.isna().sum()),
+            mean=None,
+            median=None,
+            std=None,
+            minimum=None,
+            maximum=None,
+            q1=None,
+            q3=None,
+        )
 
-    assert result.iloc[-1] == True
+    return ColumnStatistics(
+        count=int(valid.count()),
+        missing=int(numeric.isna().sum()),
+        mean=float(valid.mean()),
+        median=float(valid.median()),
+        std=float(valid.std()),
+        minimum=float(valid.min()),
+        maximum=float(valid.max()),
+        q1=float(valid.quantile(0.25)),
+        q3=float(valid.quantile(0.75)),
+    )
 
 
-def test_correlation():
-    dataframe = pd.DataFrame({
-        "x": [1, 2, 3, 4],
-        "y": [2, 4, 6, 8],
-    })
+def analyze_dataset(dataframe: pd.DataFrame):
+    if dataframe.empty:
+        raise ValueError("The dataset is empty.")
 
-    result = calculate_correlation(dataframe)
+    return {
+        str(column): analyze_column(dataframe[column])
+        for column in dataframe.select_dtypes(
+            include=[np.number]
+        ).columns
+    }
 
-    assert result.loc["x", "y"] == pytest.approx(1.0)
+
+def calculate_iqr_outliers(
+    series: pd.Series,
+    multiplier: float = 1.5,
+) -> pd.Series:
+    if multiplier <= 0:
+        raise ValueError("Multiplier must be positive.")
+
+    values = pd.to_numeric(series, errors="coerce")
+
+    q1 = values.quantile(0.25)
+    q3 = values.quantile(0.75)
+    iqr = q3 - q1
+
+    return (
+        (values < q1 - multiplier * iqr)
+        | (values > q3 + multiplier * iqr)
+    ).fillna(False)
 
 
-def test_invalid_correlation_method():
-    dataframe = pd.DataFrame({
-        "x": [1, 2, 3],
-        "y": [2, 4, 6],
-    })
+def calculate_correlation(
+    dataframe: pd.DataFrame,
+    method: str = "pearson",
+) -> pd.DataFrame:
+    if method not in {"pearson", "spearman", "kendall"}:
+        raise ValueError("Unsupported correlation method.")
 
-    with pytest.raises(ValueError):
-        calculate_correlation(dataframe, method="invalid")
+    numeric = dataframe.select_dtypes(include=[np.number])
+
+    if numeric.shape[1] < 2:
+        raise ValueError(
+            "At least two numeric columns are required."
+        )
+
+    return numeric.corr(method=method)
