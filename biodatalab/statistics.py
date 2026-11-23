@@ -1,8 +1,6 @@
-
 """Descriptive statistics for BioDataLab."""
 
 from dataclasses import dataclass
-
 import numpy as np
 import pandas as pd
 
@@ -56,21 +54,17 @@ def analyze_dataset(dataframe: pd.DataFrame):
 
     return {
         str(column): analyze_column(dataframe[column])
-        for column in dataframe.select_dtypes(
-            include=[np.number]
-        ).columns
+        for column in dataframe.select_dtypes(include=[np.number]).columns
     }
 
 
 def calculate_iqr_outliers(
-    series: pd.Series,
-    multiplier: float = 1.5,
+    series: pd.Series, multiplier: float = 1.5
 ) -> pd.Series:
     if multiplier <= 0:
         raise ValueError("Multiplier must be positive.")
 
     values = pd.to_numeric(series, errors="coerce")
-
     q1 = values.quantile(0.25)
     q3 = values.quantile(0.75)
     iqr = q3 - q1
@@ -82,8 +76,7 @@ def calculate_iqr_outliers(
 
 
 def calculate_correlation(
-    dataframe: pd.DataFrame,
-    method: str = "pearson",
+    dataframe: pd.DataFrame, method: str = "pearson"
 ) -> pd.DataFrame:
     if method not in {"pearson", "spearman", "kendall"}:
         raise ValueError("Unsupported correlation method.")
@@ -91,8 +84,6 @@ def calculate_correlation(
     numeric = dataframe.select_dtypes(include=[np.number])
 
     if numeric.shape[1] < 2:
-        raise ValueError(
-            "At least two numeric columns are required."
-        )
+        raise ValueError("At least two numeric columns are required.")
 
     return numeric.corr(method=method)
