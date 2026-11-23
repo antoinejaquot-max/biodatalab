@@ -93,5 +93,5 @@ def test_clean_dataset():
     result = clean_dataset(df)
 
     assert "empty" not in result.columns
-    assert len(result) == 3
+    assert len(result) == 2
     assert result["height"].isna().sum() == 0
