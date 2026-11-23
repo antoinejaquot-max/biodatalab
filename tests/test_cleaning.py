@@ -6,7 +6,9 @@ from biodatalab.cleaning import (
     remove_empty_columns,
     remove_empty_rows,
     fill_missing_numeric,
+    fill_missing_categorical,
     remove_duplicate_rows,
+    remove_incomplete_rows,
     clean_dataset,
 )
 
@@ -95,3 +97,64 @@ def test_clean_dataset():
     assert "empty" not in result.columns
     assert len(result) == 2
     assert result["height"].isna().sum() == 0
+
+
+def test_fill_missing_categorical_mode():
+    dataframe = pd.DataFrame({
+        "species": ["Oak", "Oak", None, "Pine"]
+    })
+
+    result = fill_missing_categorical(dataframe)
+
+    assert result["species"].isna().sum() == 0
+    assert result["species"].iloc[2] == "Oak"
+
+
+def test_fill_missing_categorical_constant():
+    dataframe = pd.DataFrame({
+        "species": ["Oak", None, "Pine"]
+    })
+
+    result = fill_missing_categorical(
+        dataframe,
+        strategy="constant",
+        custom_value="Unknown",
+    )
+
+    assert result["species"].iloc[1] == "Unknown"
+
+
+def test_remove_incomplete_rows():
+    dataframe = pd.DataFrame({
+        "a": [1, None, None],
+        "b": [2, None, 3],
+    })
+
+    result = remove_incomplete_rows(
+        dataframe,
+        max_missing_fraction=0.5,
+    )
+
+    assert len(result) == 2
+
+
+def test_remove_incomplete_rows_invalid_threshold():
+    dataframe = pd.DataFrame({"a": [1, 2]})
+
+    with pytest.raises(ValueError):
+        remove_incomplete_rows(
+            dataframe,
+            max_missing_fraction=1.5,
+        )
+
+
+def test_clean_dataset_with_categorical_values():
+    dataframe = pd.DataFrame({
+        "height": [10, 20, 30],
+        "species": ["Oak", None, "Pine"],
+    })
+
+    result = clean_dataset(dataframe)
+
+    assert result["species"].isna().sum() == 0
+
