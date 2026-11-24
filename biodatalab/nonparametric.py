@@ -3,8 +3,6 @@
 
 from __future__ import annotations
 
-from itertools import combinations
-
 import numpy as np
 import pandas as pd
 from scipy import stats
@@ -26,14 +24,6 @@ def _numeric_values(values, name: str) -> np.ndarray:
         raise ValueError(f"{name} contains infinite values.")
 
     return result
-
-
-def _effect_r(statistic: float, n: int) -> float | None:
-    """Calculate an approximate rank-based effect size."""
-    if n <= 0:
-        return None
-
-    return float(abs(statistic) / np.sqrt(n))
 
 
 def mann_whitney(
@@ -81,14 +71,28 @@ def wilcoxon_signed_rank(
 
     _validate_alpha(alpha)
 
-    x = _numeric_values(before, "before")
-    y = _numeric_values(after, "after")
-
-    if len(x) != len(y):
-        raise ValueError("Paired samples must have equal lengths.")
-
     if alternative not in {"two-sided", "less", "greater"}:
         raise ValueError("Invalid alternative hypothesis.")
+
+    x_series = pd.to_numeric(pd.Series(before), errors="coerce")
+    y_series = pd.to_numeric(pd.Series(after), errors="coerce")
+
+    if len(x_series) != len(y_series):
+        raise ValueError("Paired samples must have equal lengths.")
+
+    paired = pd.DataFrame({
+        "before": x_series,
+        "after": y_series,
+    }).dropna()
+
+    x = paired["before"].to_numpy(dtype=float)
+    y = paired["after"].to_numpy(dtype=float)
+
+    if len(x) == 0:
+        raise ValueError("No valid paired observations.")
+
+    if not np.all(np.isfinite(x)) or not np.all(np.isfinite(y)):
+        raise ValueError("Samples must contain finite values.")
 
     differences = y - x
 
@@ -166,12 +170,8 @@ def spearman_correlation(
 
     _validate_alpha(alpha)
 
-    x_values = pd.to_numeric(
-        pd.Series(x), errors="coerce"
-    )
-    y_values = pd.to_numeric(
-        pd.Series(y), errors="coerce"
-    )
+    x_values = pd.to_numeric(pd.Series(x), errors="coerce")
+    y_values = pd.to_numeric(pd.Series(y), errors="coerce")
 
     if len(x_values) != len(y_values):
         raise ValueError("Variables must have equal lengths.")
@@ -205,7 +205,10 @@ def spearman_correlation(
     }
 
 
-def holm_correction(p_values, alpha: float = 0.05) -> dict:
+def holm_correction(
+    p_values,
+    alpha: float = 0.05,
+) -> dict:
     """Apply Holm-Bonferroni correction to multiple p-values."""
 
     _validate_alpha(alpha)
@@ -213,7 +216,9 @@ def holm_correction(p_values, alpha: float = 0.05) -> dict:
     values = np.asarray(p_values, dtype=float)
 
     if values.ndim != 1 or len(values) == 0:
-        raise ValueError("p_values must be a non-empty one-dimensional sequence.")
+        raise ValueError(
+            "p_values must be a non-empty one-dimensional sequence."
+        )
 
     if not np.all(np.isfinite(values)):
         raise ValueError("p_values must be finite.")
