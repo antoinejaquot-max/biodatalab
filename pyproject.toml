@@ -5,12 +5,16 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "biodatalab"
-version = "0.2.0"
+version = "0.3.0"
 description = "Open-source platform for biological and agricultural data analysis"
+readme = "README.md"
 requires-python = ">=3.10"
+license = { file = "LICENSE" }
+
 dependencies = [
     "numpy>=1.24",
     "pandas>=2.0",
+    "scipy>=1.11",
     "openpyxl>=3.1",
     "matplotlib>=3.8",
 ]
