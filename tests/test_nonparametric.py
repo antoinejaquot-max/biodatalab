@@ -29,21 +29,14 @@ def test_mann_whitney_detects_difference():
 
 
 def test_mann_whitney_sample_sizes():
-    result = mann_whitney(
-        [1, 2, 3],
-        [4, 5, 6, 7],
-    )
+    result = mann_whitney([1, 2, 3], [4, 5, 6, 7])
 
     assert result["sample_sizes"] == [3, 4]
 
 
 def test_mann_whitney_invalid_alternative():
     with pytest.raises(ValueError):
-        mann_whitney(
-            [1, 2, 3],
-            [4, 5, 6],
-            alternative="invalid",
-        )
+        mann_whitney([1, 2, 3], [4, 5, 6], alternative="invalid")
 
 
 def test_mann_whitney_invalid_alpha():
@@ -86,10 +79,7 @@ def test_wilcoxon_equal_samples():
 
 def test_wilcoxon_unequal_lengths():
     with pytest.raises(ValueError):
-        wilcoxon_signed_rank(
-            [1, 2, 3],
-            [2, 3],
-        )
+        wilcoxon_signed_rank([1, 2, 3], [2, 3])
 
 
 def test_wilcoxon_invalid_alternative():
@@ -108,6 +98,14 @@ def test_wilcoxon_missing_values():
     )
 
     assert result["sample_size"] == 3
+
+
+def test_wilcoxon_all_missing_pairs():
+    with pytest.raises(ValueError):
+        wilcoxon_signed_rank(
+            [np.nan, np.nan],
+            [1, 2],
+        )
 
 
 # --------------------------------------------------
@@ -138,9 +136,7 @@ def test_kruskal_group_sizes():
 
 def test_kruskal_requires_two_groups():
     with pytest.raises(ValueError):
-        kruskal_wallis({
-            "Control": [1, 2, 3],
-        })
+        kruskal_wallis({"Control": [1, 2, 3]})
 
 
 # --------------------------------------------------
@@ -168,26 +164,17 @@ def test_spearman_negative_correlation():
 
 def test_spearman_unequal_lengths():
     with pytest.raises(ValueError):
-        spearman_correlation(
-            [1, 2, 3],
-            [1, 2],
-        )
+        spearman_correlation([1, 2, 3], [1, 2])
 
 
 def test_spearman_constant_variable():
     with pytest.raises(ValueError):
-        spearman_correlation(
-            [1, 1, 1, 1],
-            [2, 3, 4, 5],
-        )
+        spearman_correlation([1, 1, 1, 1], [2, 3, 4, 5])
 
 
 def test_spearman_too_few_pairs():
     with pytest.raises(ValueError):
-        spearman_correlation(
-            [1, 2],
-            [3, 4],
-        )
+        spearman_correlation([1, 2], [3, 4])
 
 
 def test_spearman_missing_values():
@@ -233,4 +220,4 @@ def test_holm_correction_empty_input():
 def test_holm_correction_significance():
     result = holm_correction([0.001, 0.02, 0.5])
 
-    assert result["significant"] == [True, False, False]
+    assert result["significant"] == [True, True, False]
