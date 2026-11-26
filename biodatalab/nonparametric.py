@@ -9,8 +9,8 @@ from scipy import stats
 
 
 def _validate_alpha(alpha: float) -> None:
-    if not 0 < alpha < 1:
-        raise ValueError("alpha must be between 0 and 1.")
+    if not np.isfinite(alpha) or not 0 < alpha < 1:
+        raise ValueError("alpha must be finite and between 0 and 1.")
 
 
 def _numeric_values(values, name: str) -> np.ndarray:
@@ -20,7 +20,7 @@ def _numeric_values(values, name: str) -> np.ndarray:
     if len(result) == 0:
         raise ValueError(f"{name} contains no valid numeric values.")
 
-    if not np.all(np.isfinite(result)):
+    if not np.isfinite(result).all():
         raise ValueError(f"{name} contains infinite values.")
 
     return result
@@ -43,10 +43,7 @@ def mann_whitney(
         raise ValueError("Invalid alternative hypothesis.")
 
     result = stats.mannwhitneyu(
-        x,
-        y,
-        alternative=alternative,
-        method="auto",
+        x, y, alternative=alternative, method="auto"
     )
 
     return {
@@ -91,7 +88,7 @@ def wilcoxon_signed_rank(
     if len(x) == 0:
         raise ValueError("No valid paired observations.")
 
-    if not np.all(np.isfinite(x)) or not np.all(np.isfinite(y)):
+    if not np.isfinite(x).all() or not np.isfinite(y).all():
         raise ValueError("Samples must contain finite values.")
 
     differences = y - x
@@ -109,10 +106,7 @@ def wilcoxon_signed_rank(
         }
 
     result = stats.wilcoxon(
-        x,
-        y,
-        alternative=alternative,
-        method="auto",
+        x, y, alternative=alternative, method="auto"
     )
 
     return {
@@ -138,18 +132,31 @@ def kruskal_wallis(
     if not isinstance(groups, dict) or len(groups) < 2:
         raise ValueError("At least two independent groups are required.")
 
-    samples = {
-        str(name): _numeric_values(values, str(name))
-        for name, values in groups.items()
-    }
+    samples = {}
 
-    result = stats.kruskal(*samples.values())
+    for name, values in groups.items():
+        key = str(name)
+
+        if key in samples:
+            raise ValueError("Group names must be unique after conversion.")
+
+        samples[key] = _numeric_values(values, key)
+
+    all_values = np.concatenate(list(samples.values()))
+
+    if np.all(all_values == all_values[0]):
+        statistic = 0.0
+        p_value = 1.0
+    else:
+        result = stats.kruskal(*samples.values())
+        statistic = float(result.statistic)
+        p_value = float(result.pvalue)
 
     return {
         "test": "Kruskal-Wallis",
-        "statistic": float(result.statistic),
-        "p_value": float(result.pvalue),
-        "significant": bool(result.pvalue < alpha),
+        "statistic": statistic,
+        "p_value": p_value,
+        "significant": bool(p_value < alpha),
         "alpha": alpha,
         "groups": {
             name: {
@@ -187,7 +194,7 @@ def spearman_correlation(
     if len(x_clean) < 3:
         raise ValueError("At least three valid pairs are required.")
 
-    if not np.all(np.isfinite(x_clean)) or not np.all(np.isfinite(y_clean)):
+    if not np.isfinite(x_clean).all() or not np.isfinite(y_clean).all():
         raise ValueError("Variables must contain finite values.")
 
     if np.all(x_clean == x_clean[0]) or np.all(y_clean == y_clean[0]):
@@ -220,7 +227,7 @@ def holm_correction(
             "p_values must be a non-empty one-dimensional sequence."
         )
 
-    if not np.all(np.isfinite(values)):
+    if not np.isfinite(values).all():
         raise ValueError("p_values must be finite.")
 
     if np.any((values < 0) | (values > 1)):
@@ -229,7 +236,6 @@ def holm_correction(
     n = len(values)
     order = np.argsort(values)
     adjusted = np.empty(n, dtype=float)
-
     running_max = 0.0
 
     for rank, index in enumerate(order):
