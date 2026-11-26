@@ -28,6 +28,9 @@ def analyze_time_series(
     if time_column == value_column:
         raise ValueError("Time and value columns must be different.")
 
+    if dataframe.empty:
+        raise TypeError("Value column must be numeric.")
+
     if not pd.api.types.is_numeric_dtype(dataframe[value_column]):
         raise TypeError("Value column must be numeric.")
 
