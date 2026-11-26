@@ -1,25 +1,17 @@
 
 """Export utilities for BioDataLab."""
 
-from __future__ import annotations
-
 import json
-import math
 import os
 import tempfile
-from dataclasses import asdict, is_dataclass
 from pathlib import Path
-from datetime import date, datetime
 
 import numpy as np
 import pandas as pd
 
 
 def _normalize_json(value):
-    """Convert supported scientific Python objects to JSON-safe objects."""
-
-    if is_dataclass(value) and not isinstance(value, type):
-        return _normalize_json(asdict(value))
+    """Convert common scientific Python objects into JSON-compatible values."""
 
     if isinstance(value, dict):
         return {
@@ -30,33 +22,39 @@ def _normalize_json(value):
     if isinstance(value, (list, tuple)):
         return [_normalize_json(item) for item in value]
 
-    if isinstance(value, (np.ndarray,)):
-        return _normalize_json(value.tolist())
-
     if isinstance(value, (np.integer,)):
         return int(value)
 
     if isinstance(value, (np.floating,)):
-        value = float(value)
+        result = float(value)
+        if not np.isfinite(result):
+            raise ValueError("Non-finite numbers cannot be exported.")
+        return result
 
     if isinstance(value, (np.bool_,)):
         return bool(value)
 
-    if isinstance(value, (pd.Timestamp, datetime, date)):
+    if isinstance(value, np.ndarray):
+        return _normalize_json(value.tolist())
+
+    if isinstance(value, pd.DataFrame):
+        return _normalize_json(value.to_dict(orient="records"))
+
+    if isinstance(value, pd.Series):
+        return _normalize_json(value.to_dict())
+
+    if isinstance(value, pd.Timestamp):
         return value.isoformat()
 
     if isinstance(value, Path):
         return str(value)
 
-    if value is pd.NA:
-        return None
-
-    if isinstance(value, float):
-        if not math.isfinite(value):
-            raise ValueError("Non-finite numbers cannot be exported to JSON.")
+    if value is None or isinstance(value, (str, bool, int)):
         return value
 
-    if value is None or isinstance(value, (str, int, bool)):
+    if isinstance(value, float):
+        if not np.isfinite(value):
+            raise ValueError("Non-finite numbers cannot be exported.")
         return value
 
     raise TypeError(f"Unsupported JSON value type: {type(value).__name__}")
@@ -69,7 +67,11 @@ def export_report_json(report: dict, filepath: str | Path) -> Path:
         raise TypeError("Report must be a dictionary.")
 
     path = Path(filepath)
-    normalized = _normalize_json(report)
+
+    try:
+        normalized = _normalize_json(report)
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"Invalid report data: {error}") from error
 
     temporary_path = None
 
