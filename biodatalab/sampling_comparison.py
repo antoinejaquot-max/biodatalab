@@ -31,6 +31,8 @@ def compare_samples(
     if not columns:
         raise ValueError("At least one numeric column is required.")
 
+    reference_stats = {}
+
     for column in columns:
         if column not in reference.columns:
             raise ValueError(f"Column '{column}' not found in reference.")
@@ -38,14 +40,16 @@ def compare_samples(
         if not pd.api.types.is_numeric_dtype(reference[column]):
             raise TypeError(f"Column '{column}' must be numeric.")
 
-    reference_stats = {}
-
-    for column in columns:
         values = reference[column].dropna()
 
         if values.empty:
             raise ValueError(
                 f"Reference column '{column}' contains no valid values."
+            )
+
+        if not np.isfinite(values.to_numpy(dtype=float)).all():
+            raise ValueError(
+                f"Reference column '{column}' contains infinite values."
             )
 
         reference_stats[column] = {
@@ -70,18 +74,26 @@ def compare_samples(
                     f"Column '{column}' missing from sample '{sample_name}'."
                 )
 
-            if not pd.api.types.is_numeric_dtype(sample[column]):
-                raise TypeError(
-                    f"Column '{column}' in sample '{sample_name}' "
-                    "must be numeric."
-                )
-
             values = sample[column].dropna()
 
             if values.empty:
                 raise ValueError(
                     f"Sample '{sample_name}' column '{column}' "
                     "contains no valid values."
+                )
+
+            if not pd.api.types.is_numeric_dtype(sample[column]):
+                raise TypeError(
+                    f"Column '{column}' in sample '{sample_name}' "
+                    "must be numeric."
+                )
+
+            sample_values = values.to_numpy(dtype=float)
+
+            if not np.isfinite(sample_values).all():
+                raise ValueError(
+                    f"Sample '{sample_name}' column '{column}' "
+                    "contains infinite values."
                 )
 
             mean = float(values.mean())
