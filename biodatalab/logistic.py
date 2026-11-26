@@ -1,3 +1,4 @@
+
 """Logistic regression utilities for BioDataLab."""
 
 from __future__ import annotations
@@ -6,13 +7,19 @@ import numpy as np
 import pandas as pd
 
 
+def _sigmoid(values: np.ndarray) -> np.ndarray:
+    """Compute sigmoid values while avoiding numerical overflow."""
+    values = np.clip(values, -500, 500)
+    return 1.0 / (1.0 + np.exp(-values))
+
+
 def logistic_regression(
     dataframe: pd.DataFrame,
     target: str,
     max_iter: int = 100,
     tolerance: float = 1e-8,
 ) -> dict[str, object]:
-    """Fit a binary logistic regression using Newton-Raphson."""
+    """Fit a binary logistic regression using a stabilized Newton method."""
 
     if not isinstance(dataframe, pd.DataFrame):
         raise TypeError("Input must be a pandas DataFrame.")
@@ -78,35 +85,43 @@ def logistic_regression(
     if np.any(x_values.std(axis=0) == 0):
         raise ValueError("Predictors must not have zero variance.")
 
-    x_scaled = (
-        x_values - x_values.mean(axis=0)
-    ) / x_values.std(axis=0, ddof=0)
+    # Standardize predictors for numerical stability.
+    means = x_values.mean(axis=0)
+    stds = x_values.std(axis=0)
 
-    x = np.column_stack(
-        [np.ones(len(x_scaled)), x_scaled]
-    )
+    x_scaled = (x_values - means) / stds
+
+    # Add intercept.
+    x = np.column_stack([np.ones(len(x_scaled)), x_scaled])
 
     coefficients = np.zeros(x.shape[1], dtype=float)
-
     converged = False
 
-    for _ in range(max_iter):
-        linear_predictor = x @ coefficients
+    # Small ridge regularization stabilizes the Hessian.
+    regularization = 1e-6
+    penalty = np.eye(x.shape[1]) * regularization
+    penalty[0, 0] = 0.0  # Do not penalize the intercept.
 
+    for iteration in range(max_iter):
+        linear_predictor = x @ coefficients
         probabilities = _sigmoid(linear_predictor)
 
         gradient = x.T @ (y_values - probabilities)
+        weights = np.clip(
+            probabilities * (1.0 - probabilities),
+            1e-10,
+            None,
+        )
 
-        weights = probabilities * (1 - probabilities)
-
-        hessian = x.T @ (x * weights[:, None])
+        hessian = x.T @ (x * weights[:, None]) + penalty
 
         try:
             step = np.linalg.solve(hessian, gradient)
-        except np.linalg.LinAlgError as exc:
-            raise ValueError(
-                "Model could not be fitted due to singular Hessian."
-            ) from exc
+        except np.linalg.LinAlgError:
+            step = np.linalg.pinv(hessian) @ gradient
+
+        if not np.isfinite(step).all():
+            break
 
         coefficients += step
 
@@ -114,52 +129,33 @@ def logistic_regression(
             converged = True
             break
 
-    probabilities = _sigmoid(x @ coefficients)
+    final_probabilities = _sigmoid(x @ coefficients)
+    predictions = (final_probabilities >= 0.5).astype(int)
 
-    predicted = (probabilities >= 0.5).astype(int)
+    accuracy = float(np.mean(predictions == y_values))
 
-    accuracy = float(np.mean(predicted == y_values))
-
-    log_likelihood = float(
-        np.sum(
-            y_values * np.log(np.clip(probabilities, 1e-15, 1))
-            + (1 - y_values)
-            * np.log(np.clip(1 - probabilities, 1e-15, 1))
-        )
-    )
-
-    coefficient_names = ["intercept"] + list(predictors.columns)
-
-    coefficients_df = pd.DataFrame(
-        {
-            "coefficient": coefficients,
-            "odds_ratio": np.exp(coefficients),
-        },
-        index=coefficient_names,
-    )
-
-    predictions_df = pd.DataFrame(
-        {
-            "actual": y_values.astype(int),
-            "probability": probabilities,
-            "predicted": predicted,
-        },
-        index=dataframe.index,
-    )
+    odds_ratios = np.exp(np.clip(coefficients[1:], -500, 500))
 
     return {
-        "coefficients": coefficients_df,
-        "predictions": predictions_df,
+        "coefficients": pd.Series(
+            coefficients,
+            index=["intercept"] + list(predictors.columns),
+        ),
+        "predictions": pd.Series(
+            predictions,
+            index=dataframe.index,
+            name="prediction",
+        ),
+        "probabilities": pd.Series(
+            final_probabilities,
+            index=dataframe.index,
+            name="probability",
+        ),
         "accuracy": accuracy,
-        "log_likelihood": log_likelihood,
+        "odds_ratios": pd.Series(
+            odds_ratios,
+            index=predictors.columns,
+        ),
         "converged": converged,
-        "iterations": _ + 1,
+        "iterations": iteration + 1,
     }
-
-
-def _sigmoid(values: np.ndarray) -> np.ndarray:
-    """Calculate sigmoid while limiting numerical overflow."""
-
-    values = np.clip(values, -500, 500)
-
-    return 1 / (1 + np.exp(-values))
