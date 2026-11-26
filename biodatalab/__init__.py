@@ -1,6 +1,8 @@
 
-"""BioDataLab: scientific data analysis toolkit."""
+"""BioDataLab: biological and agricultural data analysis."""
 
-__version__ = "0.1.0"
+from biodatalab.validation import validate_dataframe
 
-__author__ = "BioDataLab contributors"
+__all__ = [
+    "validate_dataframe",
+]
