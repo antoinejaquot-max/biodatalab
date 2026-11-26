@@ -86,11 +86,19 @@ def _count_changed_cells(
             cleaned_common.index
         )
 
-        before = original_common.loc[common_index]
-        after = cleaned_common.loc[common_index]
+        if len(common_index) > 0:
+            before = original_common.loc[common_index]
+            after = cleaned_common.loc[common_index]
+            method = "aligned_index"
+        else:
+            shared_rows = min(
+                len(original_common),
+                len(cleaned_common),
+            )
 
-        method = "aligned_index"
-
+            before = original_common.iloc[:shared_rows]
+            after = cleaned_common.iloc[:shared_rows]
+            method = "position_fallback"
     else:
         shared_rows = min(
             len(original_common),
@@ -99,7 +107,6 @@ def _count_changed_cells(
 
         before = original_common.iloc[:shared_rows]
         after = cleaned_common.iloc[:shared_rows]
-
         method = "position"
 
     if before.shape != after.shape:
