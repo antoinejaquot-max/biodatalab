@@ -1666,14 +1666,15 @@ elif navigation == "📅 Time series":
         ]
 
         date_columns += [
-            col for col in df.columns
-            if (
-                col not in date_columns
-                and (
-                    "date" in col.lower()
-                    or "time" in col.lower()
-                )
-            ]
+    col for col in df.columns
+    if (
+        col not in date_columns
+        and (
+            "date" in col.lower()
+            or "time" in col.lower()
+        )
+    )
+]
 
         )
 
