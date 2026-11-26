@@ -6,10 +6,17 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "biodatalab"
 version = "0.3.0"
-description = "Open-source platform for biological and agricultural data analysis"
+description = "Open-source toolkit for biological and agricultural data analysis"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { file = "LICENSE" }
+keywords = [
+    "biology",
+    "agriculture",
+    "statistics",
+    "data-analysis",
+    "scientific-computing",
+]
 
 dependencies = [
     "numpy>=1.24",
@@ -27,8 +34,13 @@ app = [
     "streamlit>=1.40",
 ]
 
+[project.urls]
+Repository = "https://github.com/antoinejaquot-max/biodatalab"
+Issues = "https://github.com/antoinejaquot-max/biodatalab/issues"
+
 [tool.setuptools.packages.find]
 include = ["biodatalab*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "-ra"
