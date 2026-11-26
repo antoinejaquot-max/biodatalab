@@ -31,6 +31,7 @@ def detect_column_types(
         non_missing = series.dropna()
         unique_count = int(non_missing.nunique())
         missing_count = int(series.isna().sum())
+        sample_count = len(non_missing)
 
         if pd.api.types.is_bool_dtype(series):
             inferred_type = "boolean"
@@ -39,7 +40,7 @@ def detect_column_types(
             if (
                 pd.api.types.is_integer_dtype(series)
                 and unique_count <= 20
-                and len(non_missing) > 0
+                and sample_count > 0
             ):
                 inferred_type = "categorical_numeric"
             else:
@@ -48,13 +49,13 @@ def detect_column_types(
         elif pd.api.types.is_datetime64_any_dtype(series):
             inferred_type = "datetime"
 
-        elif pd.api.types.is_categorical_dtype(series):
+        elif isinstance(series.dtype, pd.CategoricalDtype):
             inferred_type = "categorical"
 
         else:
             inferred_type = "text"
 
-            if len(non_missing) > 0:
+            if sample_count > 0:
                 try:
                     converted = pd.to_numeric(
                         non_missing,
@@ -66,6 +67,7 @@ def detect_column_types(
                         and unique_count > 20
                     ):
                         inferred_type = "numeric_candidate"
+
                 except (ValueError, TypeError):
                     pass
 
@@ -78,23 +80,27 @@ def detect_column_types(
 
                         if converted_dates.notna().all():
                             inferred_type = "datetime_candidate"
+
                     except (ValueError, TypeError):
                         pass
 
-                if (
-                    inferred_type == "text"
-                    and unique_count <= 20
-                ):
-                    inferred_type = "categorical"
+                if inferred_type == "text":
+                    uniqueness_ratio = (
+                        unique_count / sample_count
+                    )
+
+                    if (
+                        unique_count <= 20
+                        and uniqueness_ratio <= 0.5
+                    ):
+                        inferred_type = "categorical"
 
         result[str(column)] = {
             "dtype": dtype,
             "inferred_type": inferred_type,
             "missing_count": missing_count,
             "unique_count": unique_count,
-            "non_missing_count": int(
-                len(non_missing)
-            ),
+            "non_missing_count": int(sample_count),
         }
 
     return result
