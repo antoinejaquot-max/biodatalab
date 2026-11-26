@@ -1,383 +1,1477 @@
+"""BioDataLab Streamlit application."""
 
 from __future__ import annotations
-import io, json
-from datetime import datetime
+
+import io
+import json
+
 import numpy as np
 import pandas as pd
 import streamlit as st
+
 from scipy import stats
+
+from sklearn.linear_model import LinearRegression
+from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
 from sklearn.cluster import KMeans
-from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
-from sklearn.linear_model import LinearRegression
-from sklearn.metrics import mean_squared_error, r2_score
+from sklearn.metrics import (
+    r2_score,
+    mean_squared_error,
+    mean_absolute_error,
+)
 
-st.set_page_config(page_title="BioDataLab", page_icon="🧬", layout="wide")
+# ============================================================
+# CONFIGURATION
+# ============================================================
+
+st.set_page_config(
+    page_title="BioDataLab",
+    page_icon="🧬",
+    layout="wide",
+)
+
 st.title("🧬 BioDataLab")
-st.caption("Open-source scientific, biological and agricultural data analysis")
+st.caption(
+    "Open-source platform for biological, agricultural "
+    "and scientific data analysis."
+)
 
-for key, default in [("data", None), ("original_data", None), ("history", []), ("results", {})]:
-    if key not in st.session_state:
-        st.session_state[key] = default
-
-
-def numeric_columns(frame):
-    return frame.select_dtypes(include=np.number).columns.tolist()
-
-
-def categorical_columns(frame):
-    return frame.select_dtypes(include=["object", "category", "string", "bool"]).columns.tolist()
+# ============================================================
+# HELPERS
+# ============================================================
 
 
-def clean_numeric(series):
-    return pd.to_numeric(series, errors="coerce").dropna()
+def record(name, results):
+    st.session_state.setdefault("analysis_results", [])
+    st.session_state["analysis_results"].append(
+        {
+            "analysis": name,
+            "results": results,
+        }
+    )
 
 
-def record(name, result=None):
-    st.session_state.history.append({"analysis": name, "timestamp": datetime.now().isoformat()})
-    if result is not None:
-        st.session_state.results[name] = result
+def numeric_columns(df):
+    return df.select_dtypes(include=np.number).columns.tolist()
 
 
-def download_csv(frame, filename):
-    st.download_button("Download CSV", frame.to_csv(index=False).encode("utf-8"), filename, "text/csv")
+def clean_numeric(df):
+    return df.select_dtypes(include=np.number).dropna()
 
 
-def download_json(data, filename):
-    st.download_button("Download JSON", json.dumps(data, indent=2, default=str), filename, "application/json")
+def safe_float(value):
+    try:
+        value = float(value)
+        if np.isfinite(value):
+            return value
+        return None
+    except (TypeError, ValueError):
+        return None
 
 
-def load_file(upload):
-    filename = upload.name.lower()
-    if filename.endswith(".csv"):
-        try:
-            return pd.read_csv(upload)
-        except Exception:
-            upload.seek(0)
-            return pd.read_csv(upload, sep=";")
-    if filename.endswith((".xlsx", ".xls")):
-        return pd.read_excel(upload)
-    if filename.endswith(".json"):
-        return pd.read_json(upload)
-    if filename.endswith(".parquet"):
-        return pd.read_parquet(upload)
-    raise ValueError("Unsupported file format")
+def display_result_dict(results):
+    for key, value in results.items():
+        if isinstance(value, float):
+            st.write(f"**{key}:** {value:.6g}")
+        else:
+            st.write(f"**{key}:** {value}")
 
 
-page = st.sidebar.radio("Navigation", [
-    "Overview", "Data", "Cleaning", "Descriptive statistics", "Statistical tests",
-    "Regression", "Correlation", "Sampling", "Outliers", "PCA", "Clustering",
-    "Time series", "Bootstrap", "Effect size", "Power analysis", "Profiling", "Reports", "Export",
-])
-df = st.session_state.data
+def export_results():
+    results = st.session_state.get("analysis_results", [])
+    return json.dumps(results, indent=2, default=str)
+
+
+# ============================================================
+# DATA LOADING
+# ============================================================
+
+uploaded_file = st.sidebar.file_uploader(
+    "Import a dataset",
+    type=["csv", "xlsx", "xls"],
+)
+
+if uploaded_file is not None:
+
+    try:
+        if uploaded_file.name.endswith(".csv"):
+            df = pd.read_csv(uploaded_file)
+        else:
+            df = pd.read_excel(uploaded_file)
+
+        st.session_state["dataset"] = df
+
+    except Exception as exc:
+        st.error(f"Unable to load dataset: {exc}")
+
+if "dataset" not in st.session_state:
+
+    st.info("Upload a CSV or Excel dataset to begin.")
+
+    st.markdown(
+        """
+        ### Available features
+
+        - Data exploration
+        - Data cleaning
+        - Descriptive statistics
+        - Statistical tests
+        - Regression
+        - Correlation
+        - Sampling
+        - Outlier detection
+        - PCA
+        - Clustering
+        - Time series
+        - Bootstrap
+        - Effect sizes
+        - Power analysis
+        - Profiling
+        - Reporting
+        - Export
+        """
+    )
+
+    st.stop()
+
+df = st.session_state["dataset"]
+
+# ============================================================
+# SIDEBAR
+# ============================================================
+
+pages = [
+    "Overview",
+    "Dataset explorer",
+    "Data cleaning",
+    "Descriptive statistics",
+    "Statistical tests",
+    "Regression",
+    "Correlation",
+    "Sampling",
+    "Outlier detection",
+    "PCA",
+    "Clustering",
+    "Time series",
+    "Bootstrap",
+    "Effect size",
+    "Power analysis",
+    "Profiling",
+    "Reports",
+    "Export",
+]
+
+page = st.sidebar.radio("Navigation", pages)
+
+# ============================================================
+# OVERVIEW
+# ============================================================
 
 if page == "Overview":
-    st.header("Scientific data analysis platform")
-    st.markdown("BioDataLab provides tools for data preparation, statistical analysis, regression, sampling, multivariate analysis, visualization and reporting.")
-    st.markdown("**Available domains:** cleaning and validation, descriptive statistics, hypothesis testing, regression, correlation, sampling, outliers, PCA, clustering, time series, bootstrap, effect sizes, profiling and export.")
-    if df is not None:
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Rows", len(df)); c2.metric("Columns", len(df.columns)); c3.metric("Numeric variables", len(numeric_columns(df))); c4.metric("Missing cells", int(df.isna().sum().sum()))
-        st.dataframe(df.head(10), use_container_width=True)
-    else:
-        st.info("Upload a dataset from the Data section to begin.")
 
-elif page == "Data":
-    st.header("Data management")
-    upload = st.file_uploader("Upload data", type=["csv", "xlsx", "xls", "json", "parquet"])
-    if upload is not None:
-        try:
-            loaded = load_file(upload)
-            st.session_state.data = loaded.copy(); st.session_state.original_data = loaded.copy(); df = loaded
-            st.success("Dataset loaded.")
-        except Exception as exc:
-            st.error(str(exc))
-    df = st.session_state.data
-    if df is not None:
-        st.dataframe(df, use_container_width=True)
-        info = pd.DataFrame({"Column": df.columns, "Type": df.dtypes.astype(str).values, "Missing": df.isna().sum().values, "Unique": df.nunique().values})
-        st.subheader("Column information"); st.dataframe(info, use_container_width=True)
-        n = st.slider("Preview rows", min_value=1, max_value=max(1, min(len(df), 100)), value=min(10, len(df)))
-        st.dataframe(df.head(n), use_container_width=True)
-        chosen = st.multiselect("Display columns", df.columns.tolist(), default=df.columns.tolist())
-        if chosen: st.dataframe(df[chosen], use_container_width=True)
-        if st.button("Restore original dataset") and st.session_state.original_data is not None:
-            st.session_state.data = st.session_state.original_data.copy(); st.success("Restored.")
+    st.header("Dataset overview")
 
-elif page == "Cleaning":
+    col1, col2, col3, col4 = st.columns(4)
+
+    col1.metric("Rows", df.shape[0])
+    col2.metric("Columns", df.shape[1])
+    col3.metric("Missing values", int(df.isna().sum().sum()))
+    col4.metric("Numeric variables", len(numeric_columns(df)))
+
+    st.subheader("Preview")
+
+    st.dataframe(df.head(20), use_container_width=True)
+
+    st.subheader("Data types")
+
+    st.dataframe(
+        pd.DataFrame(
+            {
+                "Column": df.columns,
+                "Type": df.dtypes.astype(str).values,
+                "Missing": df.isna().sum().values,
+                "Unique": df.nunique().values,
+            }
+        ),
+        use_container_width=True,
+    )
+
+# ============================================================
+# DATASET EXPLORER
+# ============================================================
+
+elif page == "Dataset explorer":
+
+    st.header("Dataset explorer")
+
+    st.dataframe(df, use_container_width=True)
+
+    st.subheader("Column information")
+
+    selected_column = st.selectbox(
+        "Select a column",
+        df.columns,
+    )
+
+    st.write("**Data type:**", df[selected_column].dtype)
+    st.write("**Missing values:**", int(df[selected_column].isna().sum()))
+    st.write("**Unique values:**", int(df[selected_column].nunique()))
+
+    st.write("**Value counts**")
+
+    st.dataframe(
+        df[selected_column].value_counts(dropna=False),
+        use_container_width=True,
+    )
+
+# ============================================================
+# DATA CLEANING
+# ============================================================
+
+elif page == "Data cleaning":
+
     st.header("Data cleaning")
-    df = st.session_state.data
-    if df is None: st.warning("Upload a dataset first.")
-    else:
-        missing = pd.DataFrame({"Column": df.columns, "Missing": df.isna().sum().values, "Percent": df.isna().sum().values / max(len(df), 1) * 100})
-        st.subheader("Missing values"); st.dataframe(missing, use_container_width=True)
-        action = st.selectbox("Missing-value treatment", ["Drop rows with missing values", "Drop fully empty columns", "Fill numeric values with mean", "Fill numeric values with median", "Fill missing values with zero", "Fill with custom value"])
-        custom = st.text_input("Replacement value") if action == "Fill with custom value" else None
-        if st.button("Apply missing-value treatment"):
-            new = df.copy()
-            if action == "Drop rows with missing values": new = new.dropna()
-            elif action == "Drop fully empty columns": new = new.dropna(axis=1, how="all")
-            elif action == "Fill numeric values with mean":
-                for col in numeric_columns(new): new[col] = new[col].fillna(new[col].mean())
-            elif action == "Fill numeric values with median":
-                for col in numeric_columns(new): new[col] = new[col].fillna(new[col].median())
-            elif action == "Fill missing values with zero": new = new.fillna(0)
-            elif action == "Fill with custom value": new = new.fillna(custom)
-            st.session_state.data = new; record("Missing-value treatment", action); st.success("Treatment applied.")
-        st.divider(); st.subheader("Duplicates"); st.metric("Duplicate rows", int(df.duplicated().sum()))
-        if st.button("Remove duplicate rows"): st.session_state.data = df.drop_duplicates(); st.success("Duplicates removed.")
-        cols = st.multiselect("Remove columns", df.columns.tolist())
-        if st.button("Remove selected columns"): st.session_state.data = df.drop(columns=cols); st.success("Columns removed.")
-        cols_convert = st.multiselect("Convert to numeric", df.columns.tolist())
-        if st.button("Convert selected columns"):
-            new = df.copy()
-            for col in cols_convert: new[col] = pd.to_numeric(new[col], errors="coerce")
-            st.session_state.data = new; st.success("Conversion complete.")
-        st.subheader("Current dataset"); st.dataframe(st.session_state.data, use_container_width=True)
+
+    st.write("Current dataset")
+
+    st.dataframe(df.head(), use_container_width=True)
+
+    cleaned = df.copy()
+
+    st.subheader("Missing values")
+
+    missing_action = st.selectbox(
+        "Missing values treatment",
+        [
+            "Keep unchanged",
+            "Remove rows",
+            "Fill with mean",
+            "Fill with median",
+            "Fill with zero",
+        ],
+    )
+
+    if missing_action == "Remove rows":
+        cleaned = cleaned.dropna()
+
+    elif missing_action == "Fill with mean":
+
+        for col in numeric_columns(cleaned):
+            cleaned[col] = cleaned[col].fillna(
+                cleaned[col].mean()
+            )
+
+    elif missing_action == "Fill with median":
+
+        for col in numeric_columns(cleaned):
+            cleaned[col] = cleaned[col].fillna(
+                cleaned[col].median()
+            )
+
+    elif missing_action == "Fill with zero":
+        cleaned = cleaned.fillna(0)
+
+    st.subheader("Duplicates")
+
+    remove_duplicates = st.checkbox(
+        "Remove duplicate rows"
+    )
+
+    if remove_duplicates:
+        cleaned = cleaned.drop_duplicates()
+
+    st.subheader("Cleaning preview")
+
+    st.dataframe(cleaned, use_container_width=True)
+
+    if st.button("Apply cleaning"):
+
+        st.session_state["dataset"] = cleaned
+
+        record(
+            "Cleaning",
+            {
+                "rows_before": len(df),
+                "rows_after": len(cleaned),
+                "missing_before": int(df.isna().sum().sum()),
+                "missing_after": int(
+                    cleaned.isna().sum().sum()
+                ),
+            },
+        )
+
+        st.success("Cleaning applied.")
+
+        st.rerun()
+
+# ============================================================
+# DESCRIPTIVE STATISTICS
+# ============================================================
 
 elif page == "Descriptive statistics":
+
     st.header("Descriptive statistics")
-    df = st.session_state.data
-    if df is None: st.warning("Upload a dataset first.")
-    else:
-        nums = numeric_columns(df)
-        if nums:
-            selected = st.multiselect("Variables", nums, default=nums)
-            if selected:
-                result = df[selected].describe().T; result["Variance"] = df[selected].var(); result["Skewness"] = df[selected].skew(); result["Kurtosis"] = df[selected].kurtosis()
-                st.dataframe(result, use_container_width=True); download_csv(result.reset_index(), "descriptive_statistics.csv")
-                col = st.selectbox("Histogram variable", selected); st.histogram(df[col].dropna())
-                st.subheader("Quantiles"); st.dataframe(df[selected].quantile([.01, .05, .25, .5, .75, .95, .99]), use_container_width=True)
-        else: st.warning("No numeric columns.")
+
+    cols = numeric_columns(df)
+
+    if not cols:
+        st.warning("No numeric variables detected.")
+        st.stop()
+
+    selected = st.multiselect(
+        "Variables",
+        cols,
+        default=cols,
+    )
+
+    if selected:
+
+        descriptive = df[selected].describe().T
+
+        descriptive["variance"] = df[selected].var()
+        descriptive["skewness"] = df[selected].skew()
+        descriptive["kurtosis"] = df[selected].kurtosis()
+
+        st.dataframe(
+            descriptive,
+            use_container_width=True,
+        )
+
+        record(
+            "Descriptive statistics",
+            descriptive.to_dict(),
+        )
+
+# ============================================================
+# STATISTICAL TESTS
+# ============================================================
 
 elif page == "Statistical tests":
+
     st.header("Statistical tests")
-    df = st.session_state.data
-    if df is None: st.warning("Upload a dataset first.")
-    else:
-        nums, cats = numeric_columns(df), categorical_columns(df)
-        if nums:
-            test = st.selectbox("Test", ["One-sample t-test", "Independent t-test", "Paired t-test", "Mann-Whitney", "Wilcoxon", "One-way ANOVA", "Kruskal-Wallis", "Shapiro-Wilk"])
-            alpha = st.slider("Significance level", .01, .10, .05)
-            if test == "One-sample t-test":
-                col = st.selectbox("Variable", nums); mu = st.number_input("Reference mean", value=0.0)
-                if st.button("Run test"):
-                    res = stats.ttest_1samp(clean_numeric(df[col]), mu); st.write(res); st.write("Reject H0" if res.pvalue < alpha else "Do not reject H0")
-            elif test in ["Independent t-test", "Mann-Whitney"]:
-                if cats:
-                    col = st.selectbox("Numeric variable", nums); group = st.selectbox("Grouping variable", cats); levels = df[group].dropna().unique().tolist()
-                    if len(levels) >= 2:
-                        g1 = st.selectbox("Group 1", levels); g2 = st.selectbox("Group 2", [x for x in levels if x != g1])
-                        if st.button("Run test"):
-                            x = clean_numeric(df.loc[df[group] == g1, col]); y = clean_numeric(df.loc[df[group] == g2, col])
-                            res = stats.ttest_ind(x, y, equal_var=False) if test == "Independent t-test" else stats.mannwhitneyu(x, y, alternative="two-sided")
-                            st.write(res); st.metric("p-value", res.pvalue)
-                else: st.warning("A categorical variable is required.")
-            elif test in ["Paired t-test", "Wilcoxon"]:
-                col1 = st.selectbox("First variable", nums); col2 = st.selectbox("Second variable", [x for x in nums if x != col1])
-                if st.button("Run test"):
-                    paired = df[[col1, col2]].dropna(); res = stats.ttest_rel(paired[col1], paired[col2]) if test == "Paired t-test" else stats.wilcoxon(paired[col1], paired[col2]); st.write(res); st.metric("p-value", res.pvalue)
-            elif test in ["One-way ANOVA", "Kruskal-Wallis"]:
-                if cats:
-                    col = st.selectbox("Numeric variable", nums); group = st.selectbox("Grouping variable", cats); levels = df[group].dropna().unique()
-                    groups = [clean_numeric(df.loc[df[group] == lev, col]) for lev in levels]; groups = [g for g in groups if len(g)]
-                    if st.button("Run test") and len(groups) >= 2:
-                        res = stats.f_oneway(*groups) if test == "One-way ANOVA" else stats.kruskal(*groups); st.write(res); st.metric("p-value", res.pvalue)
-                else: st.warning("A categorical variable is required.")
-            elif test == "Shapiro-Wilk":
-                col = st.selectbox("Variable", nums)
-                if st.button("Run test"):
-                    x = clean_numeric(df[col])
-                    if 3 <= len(x) <= 5000: res = stats.shapiro(x); st.write(res); st.metric("p-value", res.pvalue)
-                    else: st.warning("Shapiro-Wilk requires 3 to 5000 observations.")
+
+    cols = numeric_columns(df)
+
+    if len(cols) < 1:
+        st.warning("Numeric variables required.")
+        st.stop()
+
+    test_type = st.selectbox(
+        "Test",
+        [
+            "One-sample t-test",
+            "Independent t-test",
+            "Paired t-test",
+            "Mann-Whitney",
+            "Wilcoxon",
+            "Kruskal-Wallis",
+            "One-way ANOVA",
+            "Pearson correlation test",
+            "Spearman correlation test",
+            "Normality test",
+        ],
+    )
+
+    col1 = st.selectbox("Variable 1", cols)
+
+    col2 = None
+
+    if test_type != "One-sample t-test":
+        col2 = st.selectbox(
+            "Variable 2",
+            [c for c in cols if c != col1],
+        )
+
+    results = {}
+
+    if test_type == "One-sample t-test":
+
+        value = st.number_input(
+            "Reference value",
+            value=0.0,
+        )
+
+        data = df[col1].dropna()
+
+        if len(data) >= 2:
+
+            result = stats.ttest_1samp(
+                data,
+                value,
+            )
+
+            results = {
+                "test": test_type,
+                "t_statistic": safe_float(result.statistic),
+                "p_value": safe_float(result.pvalue),
+            }
+
+    elif test_type == "Independent t-test":
+
+        a = df[col1].dropna()
+        b = df[col2].dropna()
+
+        if len(a) >= 2 and len(b) >= 2:
+
+            result = stats.ttest_ind(
+                a,
+                b,
+                equal_var=False,
+            )
+
+            results = {
+                "test": test_type,
+                "t_statistic": safe_float(result.statistic),
+                "p_value": safe_float(result.pvalue),
+            }
+
+    elif test_type == "Paired t-test":
+
+        paired = df[[col1, col2]].dropna()
+
+        if len(paired) >= 2:
+
+            result = stats.ttest_rel(
+                paired[col1],
+                paired[col2],
+            )
+
+            results = {
+                "test": test_type,
+                "t_statistic": safe_float(result.statistic),
+                "p_value": safe_float(result.pvalue),
+            }
+
+    elif test_type == "Mann-Whitney":
+
+        a = df[col1].dropna()
+        b = df[col2].dropna()
+
+        if len(a) and len(b):
+
+            result = stats.mannwhitneyu(
+                a,
+                b,
+                alternative="two-sided",
+            )
+
+            results = {
+                "test": test_type,
+                "statistic": safe_float(result.statistic),
+                "p_value": safe_float(result.pvalue),
+            }
+
+    elif test_type == "Wilcoxon":
+
+        paired = df[[col1, col2]].dropna()
+
+        if len(paired) >= 2:
+
+            result = stats.wilcoxon(
+                paired[col1],
+                paired[col2],
+            )
+
+            results = {
+                "test": test_type,
+                "statistic": safe_float(result.statistic),
+                "p_value": safe_float(result.pvalue),
+            }
+
+    elif test_type == "Kruskal-Wallis":
+
+        groups = [
+            df[col].dropna()
+            for col in cols
+        ]
+
+        groups = [
+            g for g in groups
+            if len(g) > 0
+        ]
+
+        if len(groups) >= 2:
+
+            result = stats.kruskal(*groups)
+
+            results = {
+                "test": test_type,
+                "statistic": safe_float(result.statistic),
+                "p_value": safe_float(result.pvalue),
+            }
+
+    elif test_type == "One-way ANOVA":
+
+        groups = [
+            df[col].dropna()
+            for col in cols
+        ]
+
+        groups = [
+            g for g in groups
+            if len(g) > 0
+        ]
+
+        if len(groups) >= 2:
+
+            result = stats.f_oneway(*groups)
+
+            results = {
+                "test": test_type,
+                "F_statistic": safe_float(result.statistic),
+                "p_value": safe_float(result.pvalue),
+            }
+
+    elif test_type == "Pearson correlation test":
+
+        paired = df[[col1, col2]].dropna()
+
+        if len(paired) >= 3:
+
+            result = stats.pearsonr(
+                paired[col1],
+                paired[col2],
+            )
+
+            results = {
+                "test": test_type,
+                "correlation": safe_float(result.statistic),
+                "p_value": safe_float(result.pvalue),
+            }
+
+    elif test_type == "Spearman correlation test":
+
+        paired = df[[col1, col2]].dropna()
+
+        if len(paired) >= 3:
+
+            result = stats.spearmanr(
+                paired[col1],
+                paired[col2],
+            )
+
+            results = {
+                "test": test_type,
+                "correlation": safe_float(result.statistic),
+                "p_value": safe_float(result.pvalue),
+            }
+
+    elif test_type == "Normality test":
+
+        data = df[col1].dropna()
+
+        if 3 <= len(data) <= 5000:
+
+            result = stats.shapiro(data)
+
+            results = {
+                "test": test_type,
+                "W_statistic": safe_float(result.statistic),
+                "p_value": safe_float(result.pvalue),
+            }
+
+        elif len(data) > 5000:
+
+            result = stats.normaltest(data)
+
+            results = {
+                "test": "D'Agostino normality test",
+                "statistic": safe_float(result.statistic),
+                "p_value": safe_float(result.pvalue),
+            }
+
+    if results:
+
+        st.subheader("Results")
+
+        display_result_dict(results)
+
+        record(
+            "Statistical test",
+            results,
+        )
+
+# ============================================================
+# REGRESSION
+# ============================================================
 
 elif page == "Regression":
-    st.header("Linear regression")
-    df = st.session_state.data
-    if df is None: st.warning("Upload a dataset first.")
-    else:
-        nums = numeric_columns(df)
-        if len(nums) >= 2:
-            target = st.selectbox("Target", nums); features = st.multiselect("Predictors", [c for c in nums if c != target]); split = st.slider("Test proportion", .1, .5, .2)
-            if features and st.button("Fit model"):
-                data = df[features + [target]].dropna(); Xtr, Xte, ytr, yte = train_test_split(data[features], data[target], test_size=split, random_state=42)
-                model = LinearRegression().fit(Xtr, ytr); pred = model.predict(Xte)
-                st.metric("R²", r2_score(yte, pred)); st.metric("RMSE", np.sqrt(mean_squared_error(yte, pred)))
-                st.dataframe(pd.DataFrame({"Variable": features, "Coefficient": model.coef_}), use_container_width=True)
-                result = pd.DataFrame({"Observed": yte.values, "Predicted": pred}); st.dataframe(result, use_container_width=True); download_csv(result, "regression_predictions.csv")
-                record("Regression", {"R2": r2_score(yte, pred), "RMSE": np.sqrt(mean_squared_error(yte, pred)))
-        else: st.warning("At least two numeric variables required.")
+
+    st.header("Regression")
+
+    cols = numeric_columns(df)
+
+    if len(cols) < 2:
+        st.warning("At least two numeric variables are required.")
+        st.stop()
+
+    target = st.selectbox(
+        "Target variable",
+        cols,
+    )
+
+    predictors = st.multiselect(
+        "Predictors",
+        [c for c in cols if c != target],
+    )
+
+    if predictors:
+
+        regression_df = df[
+            predictors + [target]
+        ].dropna()
+
+        if len(regression_df) >= 3:
+
+            X = regression_df[predictors]
+            y = regression_df[target]
+
+            model = LinearRegression()
+
+            model.fit(X, y)
+
+            pred = model.predict(X)
+
+            r2 = r2_score(y, pred)
+            rmse = np.sqrt(
+                mean_squared_error(y, pred)
+            )
+            mae = mean_absolute_error(y, pred)
+
+            results = {
+                "R2": safe_float(r2),
+                "RMSE": safe_float(rmse),
+                "MAE": safe_float(mae),
+                "Intercept": safe_float(model.intercept_),
+            }
+
+            st.subheader("Performance")
+
+            display_result_dict(results)
+
+            st.subheader("Coefficients")
+
+            coefficients = pd.DataFrame(
+                {
+                    "Variable": predictors,
+                    "Coefficient": model.coef_,
+                }
+            )
+
+            st.dataframe(
+                coefficients,
+                use_container_width=True,
+            )
+
+            st.subheader("Predictions")
+
+            prediction_df = pd.DataFrame(
+                {
+                    "Observed": y.values,
+                    "Predicted": pred,
+                }
+            )
+
+            st.dataframe(
+                prediction_df,
+                use_container_width=True,
+            )
+
+            record(
+                "Regression",
+                {
+                    "R2": safe_float(r2_score(y, pred)),
+                    "RMSE": safe_float(
+                        np.sqrt(
+                            mean_squared_error(y, pred)
+                        )
+                    ),
+                    "MAE": safe_float(
+                        mean_absolute_error(y, pred)
+                    ),
+                    "Coefficients": dict(
+                        zip(predictors, model.coef_.tolist())
+                    ),
+                },
+            )
+
+# ============================================================
+# CORRELATION
+# ============================================================
 
 elif page == "Correlation":
-    st.header("Correlation")
-    df = st.session_state.data
-    if df is None: st.warning("Upload a dataset first.")
-    else:
-        nums = numeric_columns(df)
-        if len(nums) >= 2:
-            method = st.selectbox("Method", ["pearson", "spearman", "kendall"]); selected = st.multiselect("Variables", nums, default=nums)
-            if len(selected) >= 2:
-                corr = df[selected].corr(method=method); st.dataframe(corr, use_container_width=True); download_csv(corr.reset_index(), "correlation.csv")
-                pairs = []
-                for i, c1 in enumerate(selected):
-                    for c2 in selected[i + 1:]:
-                        pair = df[[c1, c2]].dropna()
-                        if len(pair) >= 2:
-                            res = stats.pearsonr(pair[c1], pair[c2]) if method == "pearson" else stats.spearmanr(pair[c1], pair[c2]) if method == "spearman" else stats.kendalltau(pair[c1], pair[c2])
-                            pairs.append({"Variable 1": c1, "Variable 2": c2, "Correlation": res.statistic, "p-value": res.pvalue})
-                st.subheader("Pairwise tests"); st.dataframe(pd.DataFrame(pairs), use_container_width=True)
+
+    st.header("Correlation analysis")
+
+    cols = numeric_columns(df)
+
+    if len(cols) < 2:
+        st.warning("At least two numeric variables are required.")
+        st.stop()
+
+    method = st.selectbox(
+        "Method",
+        ["pearson", "spearman", "kendall"],
+    )
+
+    matrix = df[cols].corr(
+        method=method,
+    )
+
+    st.dataframe(
+        matrix,
+        use_container_width=True,
+    )
+
+    st.subheader("Correlation matrix")
+
+    st.dataframe(
+        matrix.style.format("{:.3f}"),
+        use_container_width=True,
+    )
+
+    record(
+        "Correlation",
+        {
+            "method": method,
+            "matrix": matrix.to_dict(),
+        },
+    )
+
+# ============================================================
+# SAMPLING
+# ============================================================
 
 elif page == "Sampling":
-    st.header("Sampling")
-    df = st.session_state.data
-    if df is None: st.warning("Upload a dataset first.")
-    else:
-        method = st.selectbox("Method", ["Random", "Stratified"]); size = st.number_input("Sample size", 1, len(df), max(1, min(len(df), int(len(df) * .2))))
-        cats = categorical_columns(df); strat_col = st.selectbox("Stratification column", cats) if method == "Stratified" and cats else None
-        if method == "Stratified" and not cats: st.warning("Categorical column required.")
-        if st.button("Generate sample"):
-            if method == "Random": sample = df.sample(n=int(size), random_state=42)
-            elif strat_col:
-                valid = df.dropna(subset=[strat_col]); props = valid[strat_col].value_counts(normalize=True); parts = []
-                for lev, prop in props.items():
-                    group = valid[valid[strat_col] == lev]; n = min(len(group), max(1, round(int(size) * prop))); parts.append(group.sample(n=n, random_state=42))
-                sample = pd.concat(parts)
-                if len(sample) > int(size): sample = sample.sample(n=int(size), random_state=42)
-            else: sample = pd.DataFrame()
-            st.dataframe(sample, use_container_width=True); st.metric("Sample rows", len(sample)); download_csv(sample, "sample.csv")
-            if method == "Stratified" and strat_col:
-                st.write("Population proportions"); st.dataframe(df[strat_col].value_counts(normalize=True)); st.write("Sample proportions"); st.dataframe(sample[strat_col].value_counts(normalize=True))
-            record("Sampling", {"method": method, "size": len(sample)})
 
-elif page == "Outliers":
+    st.header("Sampling")
+
+    sample_size = st.slider(
+        "Sample size",
+        min_value=1,
+        max_value=len(df),
+        value=max(1, len(df) // 2),
+    )
+
+    random_state = st.number_input(
+        "Random seed",
+        value=42,
+        step=1,
+    )
+
+    sampled = df.sample(
+        n=sample_size,
+        random_state=int(random_state),
+    )
+
+    st.dataframe(
+        sampled,
+        use_container_width=True,
+    )
+
+    st.download_button(
+        "Download sample CSV",
+        sampled.to_csv(index=False),
+        file_name="sample.csv",
+        mime="text/csv",
+    )
+
+# ============================================================
+# OUTLIER DETECTION
+# ============================================================
+
+elif page == "Outlier detection":
+
     st.header("Outlier detection")
-    df = st.session_state.data
-    if df is None: st.warning("Upload a dataset first.")
+
+    cols = numeric_columns(df)
+
+    if not cols:
+        st.warning("No numeric variables detected.")
+        st.stop()
+
+    selected = st.selectbox(
+        "Variable",
+        cols,
+    )
+
+    method = st.selectbox(
+        "Method",
+        ["IQR", "Z-score"],
+    )
+
+    data = df[selected].dropna()
+
+    if method == "IQR":
+
+        q1 = data.quantile(0.25)
+        q3 = data.quantile(0.75)
+
+        iqr = q3 - q1
+
+        lower = q1 - 1.5 * iqr
+        upper = q3 + 1.5 * iqr
+
+        outliers = data[
+            (data < lower) | (data > upper)
+        ]
+
     else:
-        nums = numeric_columns(df)
-        if nums:
-            col = st.selectbox("Variable", nums); method = st.selectbox("Method", ["IQR", "Z-score"]); x = clean_numeric(df[col])
-            if method == "IQR":
-                q1, q3 = x.quantile(.25), x.quantile(.75); spread = q3 - q1; low, high = q1 - 1.5 * spread, q3 + 1.5 * spread; mask = (df[col] < low) | (df[col] > high)
-            else:
-                sd = df[col].std(); mask = (df[col] - df[col].mean()).abs() / sd > 3 if sd != 0 else pd.Series(False, index=df.index)
-            out = df[mask]; st.metric("Detected", len(out)); st.dataframe(out, use_container_width=True); download_csv(out, "outliers.csv")
-            if st.button("Remove outliers"): st.session_state.data = df[~mask].copy(); st.success("Removed.")
+
+        z = np.abs(
+            stats.zscore(data, nan_policy="omit")
+        )
+
+        outliers = data[
+            z > 3
+        ]
+
+        lower = None
+        upper = None
+
+    st.metric(
+        "Detected outliers",
+        len(outliers),
+    )
+
+    st.dataframe(
+        outliers.to_frame("Outlier"),
+        use_container_width=True,
+    )
+
+    if method == "IQR":
+
+        st.write("Lower bound:", lower)
+        st.write("Upper bound:", upper)
+
+    record(
+        "Outlier detection",
+        {
+            "variable": selected,
+            "method": method,
+            "count": int(len(outliers)),
+        },
+    )
+
+# ============================================================
+# PCA
+# ============================================================
 
 elif page == "PCA":
-    st.header("Principal component analysis")
-    df = st.session_state.data
-    if df is None: st.warning("Upload a dataset first.")
-    else:
-        nums = numeric_columns(df)
-        if len(nums) >= 2:
-            selected = st.multiselect("Variables", nums, default=nums)
-            if len(selected) >= 2:
-                ncomp = st.slider("Components", 2, min(10, len(selected)), 2)
-                if st.button("Run PCA"):
-                    data = df[selected].dropna(); scaled = StandardScaler().fit_transform(data); model = PCA(n_components=ncomp); transformed = model.fit_transform(scaled)
-                    result = pd.DataFrame(transformed, columns=[f"PC{i+1}" for i in range(ncomp)]); st.subheader("Scores"); st.dataframe(result, use_container_width=True)
-                    variance = pd.DataFrame({"Component": [f"PC{i+1}" for i in range(ncomp)], "Explained variance": model.explained_variance_ratio_, "Cumulative": np.cumsum(model.explained_variance_ratio_)}); st.dataframe(variance, use_container_width=True)
-                    loadings = pd.DataFrame(model.components_.T, index=selected, columns=[f"PC{i+1}" for i in range(ncomp)]); st.subheader("Loadings"); st.dataframe(loadings, use_container_width=True); download_csv(result, "pca_scores.csv"); download_csv(loadings.reset_index(), "pca_loadings.csv")
+
+    st.header("Principal Component Analysis")
+
+    cols = numeric_columns(df)
+
+    if len(cols) < 2:
+        st.warning("At least two numeric variables are required.")
+        st.stop()
+
+    selected = st.multiselect(
+        "Variables",
+        cols,
+        default=cols,
+    )
+
+    if len(selected) >= 2:
+
+        data = df[selected].dropna()
+
+        if len(data) >= 2:
+
+            scaled = StandardScaler().fit_transform(data)
+
+            pca = PCA()
+
+            transformed = pca.fit_transform(scaled)
+
+            st.subheader("Explained variance")
+
+            variance = pd.DataFrame(
+                {
+                    "Component": [
+                        f"PC{i + 1}"
+                        for i in range(len(pca.explained_variance_ratio_))
+                    ],
+                    "Variance": pca.explained_variance_ratio_,
+                    "Cumulative": np.cumsum(
+                        pca.explained_variance_ratio_
+                    ),
+                }
+            )
+
+            st.dataframe(
+                variance,
+                use_container_width=True,
+            )
+
+            st.subheader("Components")
+
+            components = pd.DataFrame(
+                pca.components_,
+                columns=selected,
+            )
+
+            st.dataframe(
+                components,
+                use_container_width=True,
+            )
+
+            record(
+                "PCA",
+                {
+                    "explained_variance": (
+                        pca.explained_variance_ratio_.tolist()
+                    ),
+                    "components": pca.components_.tolist(),
+                },
+            )
+
+# ============================================================
+# CLUSTERING
+# ============================================================
 
 elif page == "Clustering":
+
     st.header("K-means clustering")
-    df = st.session_state.data
-    if df is None: st.warning("Upload a dataset first.")
-    else:
-        nums = numeric_columns(df)
-        if len(nums) >= 2:
-            selected = st.multiselect("Variables", nums, default=nums); k = st.slider("Clusters", 2, 10, 3)
-            if len(selected) >= 2 and st.button("Run clustering"):
-                data = df[selected].dropna(); scaled = StandardScaler().fit_transform(data); model = KMeans(n_clusters=k, random_state=42, n_init=10); labels = model.fit_predict(scaled); result = data.copy(); result["Cluster"] = labels
-                st.dataframe(result, use_container_width=True); st.subheader("Cluster sizes"); st.dataframe(result["Cluster"].value_counts().sort_index()); st.subheader("Centers (scaled space)"); st.dataframe(pd.DataFrame(model.cluster_centers_, columns=selected)); st.metric("Inertia", model.inertia_); download_csv(result, "clusters.csv")
+
+    cols = numeric_columns(df)
+
+    if len(cols) < 2:
+        st.warning("At least two numeric variables are required.")
+        st.stop()
+
+    selected = st.multiselect(
+        "Variables",
+        cols,
+        default=cols,
+    )
+
+    k = st.slider(
+        "Number of clusters",
+        2,
+        10,
+        3,
+    )
+
+    if len(selected) >= 2:
+
+        data = df[selected].dropna()
+
+        if len(data) >= k:
+
+            scaled = StandardScaler().fit_transform(data)
+
+            model = KMeans(
+                n_clusters=k,
+                random_state=42,
+                n_init=10,
+            )
+
+            labels = model.fit_predict(scaled)
+
+            result_df = data.copy()
+
+            result_df["Cluster"] = labels
+
+            st.dataframe(
+                result_df,
+                use_container_width=True,
+            )
+
+            st.subheader("Cluster sizes")
+
+            st.write(
+                pd.Series(labels).value_counts().sort_index()
+            )
+
+            record(
+                "Clustering",
+                {
+                    "k": k,
+                    "cluster_sizes": (
+                        pd.Series(labels)
+                        .value_counts()
+                        .to_dict()
+                    ),
+                },
+            )
+
+# ============================================================
+# TIME SERIES
+# ============================================================
 
 elif page == "Time series":
-    st.header("Time series analysis")
-    df = st.session_state.data
-    if df is None: st.warning("Upload a dataset first.")
-    else:
-        nums = numeric_columns(df)
-        if nums:
-            date_col = st.selectbox("Date/time column", df.columns.tolist())
-            value_col = st.selectbox("Numeric variable", nums)
-            if st.button("Analyze time series"):
-                data = df[[date_col, value_col]].copy(); data[date_col] = pd.to_datetime(data[date_col], errors="coerce"); data[value_col] = pd.to_numeric(data[value_col], errors="coerce"); data = data.dropna().sort_values(date_col).set_index(date_col)
-                if len(data) >= 2:
-                    st.line_chart(data[value_col]); window = st.slider("Rolling window", 2, max(2, min(100, len(data))), min(7, max(2, len(data)))); mean = data[value_col].rolling(window).mean(); sd = data[value_col].rolling(window).std(); st.subheader("Rolling mean"); st.line_chart(mean); st.subheader("Rolling standard deviation"); st.line_chart(sd); download_csv(pd.DataFrame({"Value": data[value_col], "Rolling mean": mean, "Rolling standard deviation": sd}).reset_index(), "time_series.csv")
-                else: st.warning("Not enough valid date/value observations.")
+
+    st.header("Time series")
+
+    date_columns = [
+        col
+        for col in df.columns
+        if pd.api.types.is_datetime64_any_dtype(df[col])
+    ]
+
+    date_columns += [
+        col
+        for col in df.columns
+        if (
+            col not in date_columns
+            and (
+                "date" in col.lower()
+                or "time" in col.lower()
+            )
+        ]
+
+    date_columns = list(dict.fromkeys(date_columns))
+
+    if not date_columns:
+        st.warning("No date column detected.")
+        st.stop()
+
+    date_col = st.selectbox(
+        "Date column",
+        date_columns,
+    )
+
+    cols = numeric_columns(df)
+
+    if not cols:
+        st.warning("No numeric variables detected.")
+        st.stop()
+
+    value_col = st.selectbox(
+        "Value column",
+        cols,
+    )
+
+    ts = df[[date_col, value_col]].copy()
+
+    ts[date_col] = pd.to_datetime(
+        ts[date_col],
+        errors="coerce",
+    )
+
+    ts = ts.dropna()
+
+    ts = ts.sort_values(date_col)
+
+    st.dataframe(
+        ts,
+        use_container_width=True,
+    )
+
+    st.line_chart(
+        ts.set_index(date_col)[value_col]
+    )
+
+    record(
+        "Time series",
+        {
+            "date_column": date_col,
+            "value_column": value_col,
+            "observations": len(ts),
+        },
+    )
+
+# ============================================================
+# BOOTSTRAP
+# ============================================================
 
 elif page == "Bootstrap":
-    st.header("Bootstrap resampling")
-    df = st.session_state.data
-    if df is None: st.warning("Upload a dataset first.")
-    else:
-        nums = numeric_columns(df)
-        if nums:
-            col = st.selectbox("Variable", nums); iterations = st.number_input("Iterations", 100, 10000, 1000, 100); confidence = st.selectbox("Confidence level", [90, 95, 99], index=1); statistic = st.selectbox("Statistic", ["Mean", "Median"])
-            if st.button("Run bootstrap"):
-                x = clean_numeric(df[col]).values
-                if len(x):
-                    vals = [np.mean(np.random.choice(x, size=len(x), replace=True)) if statistic == "Mean" else np.median(np.random.choice(x, size=len(x), replace=True)) for _ in range(int(iterations))]; vals = np.asarray(vals); alpha = 1 - confidence / 100; lo, hi = np.quantile(vals, [alpha / 2, 1 - alpha / 2]); st.metric(f"Bootstrap {statistic}", float(np.mean(vals))); st.metric("Lower bound", float(lo)); st.metric("Upper bound", float(hi)); res = pd.DataFrame({"Bootstrap statistic": vals}); st.dataframe(res.head(100)); download_csv(res, "bootstrap.csv")
+
+    st.header("Bootstrap confidence intervals")
+
+    cols = numeric_columns(df)
+
+    if not cols:
+        st.warning("No numeric variables detected.")
+        st.stop()
+
+    selected = st.selectbox(
+        "Variable",
+        cols,
+    )
+
+    iterations = st.slider(
+        "Iterations",
+        100,
+        10000,
+        1000,
+        step=100,
+    )
+
+    data = df[selected].dropna().to_numpy()
+
+    if len(data) >= 2:
+
+        boot_means = []
+
+        for _ in range(iterations):
+
+            sample = np.random.choice(
+                data,
+                size=len(data),
+                replace=True,
+            )
+
+            boot_means.append(
+                np.mean(sample)
+            )
+
+        boot_means = np.asarray(boot_means)
+
+        ci_low, ci_high = np.percentile(
+            boot_means,
+            [2.5, 97.5],
+        )
+
+        st.metric(
+            "Mean",
+            f"{np.mean(data):.6g}",
+        )
+
+        st.write(
+            "95% confidence interval:",
+            f"[{ci_low:.6g}, {ci_high:.6g}]",
+        )
+
+        record(
+            "Bootstrap",
+            {
+                "mean": safe_float(np.mean(data)),
+                "CI_lower": safe_float(ci_low),
+                "CI_upper": safe_float(ci_high),
+                "iterations": iterations,
+            },
+        )
+
+# ============================================================
+# EFFECT SIZE
+# ============================================================
 
 elif page == "Effect size":
-    st.header("Effect size (Cohen's d)")
-    df = st.session_state.data
-    if df is None: st.warning("Upload a dataset first.")
-    else:
-        nums, cats = numeric_columns(df), categorical_columns(df)
-        if nums and cats:
-            col = st.selectbox("Numeric variable", nums); group_col = st.selectbox("Group variable", cats); levels = df[group_col].dropna().unique().tolist()
-            if len(levels) >= 2:
-                g1 = st.selectbox("Group 1", levels); g2 = st.selectbox("Group 2", [v for v in levels if v != g1])
-                if st.button("Calculate"):
-                    x = clean_numeric(df.loc[df[group_col] == g1, col]); y = clean_numeric(df.loc[df[group_col] == g2, col])
-                    if len(x) > 1 and len(y) > 1:
-                        pooled = np.sqrt(((len(x)-1)*x.var() + (len(y)-1)*y.var()) / (len(x)+len(y)-2))
-                        if pooled > 0: st.metric("Cohen's d", float((x.mean()-y.mean())/pooled))
-                        else: st.warning("Pooled standard deviation is zero.")
+
+    st.header("Effect size")
+
+    cols = numeric_columns(df)
+
+    if len(cols) < 2:
+        st.warning("At least two numeric variables are required.")
+        st.stop()
+
+    a_col = st.selectbox(
+        "Group / variable A",
+        cols,
+    )
+
+    b_col = st.selectbox(
+        "Group / variable B",
+        [c for c in cols if c != a_col],
+    )
+
+    paired = df[[a_col, b_col]].dropna()
+
+    if len(paired) >= 2:
+
+        a = paired[a_col].to_numpy()
+        b = paired[b_col].to_numpy()
+
+        mean_a = np.mean(a)
+        mean_b = np.mean(b)
+
+        std_a = np.std(a, ddof=1)
+        std_b = np.std(b, ddof=1)
+
+        pooled_std = np.sqrt(
+            (
+                (len(a) - 1) * std_a**2
+                + (len(b) - 1) * std_b**2
+            )
+            / (
+                len(a) + len(b) - 2
+            )
+        )
+
+        if pooled_std != 0:
+
+            d = (
+                mean_a - mean_b
+            ) / pooled_std
+
+            st.metric(
+                "Cohen's d",
+                f"{d:.6g}",
+            )
+
+            record(
+                "Effect size",
+                {
+                    "Cohen_d": safe_float(d),
+                },
+            )
+
+# ============================================================
+# POWER ANALYSIS
+# ============================================================
 
 elif page == "Power analysis":
-    st.header("Power analysis context")
-    df = st.session_state.data
-    if df is None: st.warning("Upload a dataset first.")
-    else:
-        nums = numeric_columns(df)
-        if nums:
-            col = st.selectbox("Variable", nums); mu = st.number_input("Reference mean", value=0.0); x = clean_numeric(df[col]); st.metric("Sample size", len(x))
-            if len(x) > 1:
-                st.metric("Mean", float(x.mean())); st.metric("Standard deviation", float(x.std())); st.metric("Observed standardized effect", float((x.mean()-mu)/x.std()) if x.std() > 0 else 0.0)
-                st.info("Observed effect is descriptive. Post-hoc power based on observed effects does not replace prospective power analysis.")
+
+    st.header("Power analysis")
+
+    st.info(
+        "This module estimates statistical power "
+        "for a two-group independent t-test."
+    )
+
+    from statsmodels.stats.power import TTestIndPower
+
+    effect = st.number_input(
+        "Effect size (Cohen's d)",
+        value=0.5,
+        min_value=0.01,
+    )
+
+    alpha = st.number_input(
+        "Alpha",
+        value=0.05,
+        min_value=0.001,
+        max_value=0.5,
+    )
+
+    sample_size = st.number_input(
+        "Sample size per group",
+        value=30,
+        min_value=2,
+    )
+
+    analysis = TTestIndPower()
+
+    power = analysis.power(
+        effect_size=effect,
+        nobs1=sample_size,
+        alpha=alpha,
+    )
+
+    st.metric(
+        "Estimated power",
+        f"{power:.4f}",
+    )
+
+    record(
+        "Power analysis",
+        {
+            "effect_size": effect,
+            "alpha": alpha,
+            "sample_size_per_group": sample_size,
+            "power": safe_float(power),
+        },
+    )
+
+# ============================================================
+# PROFILING
+# ============================================================
 
 elif page == "Profiling":
-    st.header("Data profiling")
-    df = st.session_state.data
-    if df is None: st.warning("Upload a dataset first.")
-    else:
-        rows = []
-        for col in df.columns:
-            s = df[col]; rows.append({"Column": col, "Type": str(s.dtype), "Rows": len(s), "Missing": int(s.isna().sum()), "Missing (%)": s.isna().sum()/max(len(s),1)*100, "Unique": int(s.nunique()), "Memory bytes": int(s.memory_usage(deep=True))})
-        profile = pd.DataFrame(rows); st.dataframe(profile, use_container_width=True); st.write({"Rows": len(df), "Columns": len(df.columns), "Duplicates": int(df.duplicated().sum()), "Missing cells": int(df.isna().sum().sum()), "Numeric": len(numeric_columns(df)), "Categorical": len(categorical_columns(df))}); download_csv(profile, "profile.csv")
+
+    st.header("Dataset profiling")
+
+    profile = pd.DataFrame(
+        {
+            "Type": df.dtypes.astype(str),
+            "Missing": df.isna().sum(),
+            "Missing_percent": (
+                df.isna().mean() * 100
+            ),
+            "Unique": df.nunique(),
+        }
+    )
+
+    st.dataframe(
+        profile,
+        use_container_width=True,
+    )
+
+    st.subheader("Numeric statistics")
+
+    cols = numeric_columns(df)
+
+    if cols:
+
+        st.dataframe(
+            df[cols].describe(),
+            use_container_width=True,
+        )
+
+    st.subheader("Duplicate rows")
+
+    st.metric(
+        "Duplicates",
+        int(df.duplicated().sum()),
+    )
+
+    st.subheader("Memory usage")
+
+    memory = df.memory_usage(
+        deep=True
+    ).sum()
+
+    st.metric(
+        "Memory",
+        f"{memory / 1024:.2f} KB",
+    )
+
+    record(
+        "Profiling",
+        {
+            "rows": len(df),
+            "columns": len(df.columns),
+            "missing": int(df.isna().sum().sum()),
+            "duplicates": int(df.duplicated().sum()),
+            "memory_bytes": int(memory),
+        },
+    )
+
+# ============================================================
+# REPORTS
+# ============================================================
 
 elif page == "Reports":
-    st.header("Dataset report")
-    df = st.session_state.data
-    if df is None: st.warning("Upload a dataset first.")
+
+    st.header("Analysis report")
+
+    st.subheader("Dataset summary")
+
+    st.write(
+        f"Rows: {len(df)}"
+    )
+
+    st.write(
+        f"Columns: {len(df.columns)}"
+    )
+
+    st.write(
+        f"Missing values: {int(df.isna().sum().sum())}"
+    )
+
+    st.write(
+        f"Duplicates: {int(df.duplicated().sum())}"
+    )
+
+    st.subheader("Numeric summary")
+
+    cols = numeric_columns(df)
+
+    if cols:
+
+        st.dataframe(
+            df[cols].describe(),
+            use_container_width=True,
+        )
+
+    st.subheader("Previous analyses")
+
+    results = st.session_state.get(
+        "analysis_results",
+        [],
+    )
+
+    if results:
+
+        for item in results:
+
+            with st.expander(
+                item["analysis"]
+            ):
+
+                st.json(
+                    item["results"]
+                )
+
     else:
-        report = {"project": "BioDataLab", "generated_at": datetime.now().isoformat(), "rows": len(df), "columns": len(df.columns), "column_names": list(df.columns), "types": {c: str(t) for c,t in df.dtypes.items()}, "missing": {c: int(v) for c,v in df.isna().sum().items()}, "duplicates": int(df.duplicated().sum()), "statistics": df.describe().to_dict(), "history": st.session_state.history}; st.write({"Rows": len(df), "Columns": len(df.columns), "Missing": int(df.isna().sum().sum()), "Duplicates": int(df.duplicated().sum())}); st.dataframe(df.describe(), use_container_width=True); st.subheader("Analysis history"); st.dataframe(pd.DataFrame(st.session_state.history) if st.session_state.history else pd.DataFrame()); download_json(report, "biodatalab_report.json")
+
+        st.info(
+            "No analyses have been recorded yet."
+        )
+
+# ============================================================
+# EXPORT
+# ============================================================
 
 elif page == "Export":
-    st.header("Export data")
-    df = st.session_state.data
-    if df is None: st.warning("Upload a dataset first.")
-    else:
-        st.dataframe(df, use_container_width=True); download_csv(df, "biodatalab_dataset.csv"); buffer = io.BytesIO()
-        with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-            df.to_excel(writer, sheet_name="Dataset", index=False)
-            if numeric_columns(df): df.describe().to_excel(writer, sheet_name="Statistics")
-        st.download_button("Download Excel workbook", buffer.getvalue(), "biodatalab.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-        if st.session_state.results: download_json(st.session_state.results, "analysis_results.json")
 
-st.divider()
-st.caption("BioDataLab | Open-source scientific data analysis")
+    st.header("Export")
+
+    st.subheader("Dataset")
+
+    csv_data = df.to_csv(
+        index=False,
+    ).encode("utf-8")
+
+    st.download_button(
+        "Download dataset CSV",
+        csv_data,
+        file_name="biodatalab_dataset.csv",
+        mime="text/csv",
+    )
+
+    excel_buffer = io.BytesIO()
+
+    with pd.ExcelWriter(
+        excel_buffer,
+        engine="openpyxl",
+    ) as writer:
+
+        df.to_excel(
+            writer,
+            index=False,
+            sheet_name="Dataset",
+        )
+
+    st.download_button(
+        "Download dataset Excel",
+        excel_buffer.getvalue(),
+        file_name="biodatalab_dataset.xlsx",
+        mime=(
+            "application/vnd.openxmlformats-officedocument"
+            ".spreadsheetml.sheet"
+        ),
+    )
+
+    st.subheader("Analysis results")
+
+    results = st.session_state.get(
+        "analysis_results",
+        [],
+    )
+
+    st.download_button(
+        "Download analyses JSON",
+        export_results(),
+        file_name="biodatalab_results.json",
+        mime="application/json",
+    )
+
+    st.subheader("Reset")
+
+    if st.button(
+        "Clear analysis history",
+        type="secondary",
+    ):
+
+        st.session_state["analysis_results"] = []
+
+        st.success(
+            "Analysis history cleared."
+        )
+
+# ============================================================
+# FOOTER
+# ============================================================
+
+st.sidebar.divider()
+
+st.sidebar.caption(
+    "BioDataLab — Open-source scientific analysis"
+)
