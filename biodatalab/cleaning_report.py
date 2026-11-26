@@ -8,10 +8,15 @@ from typing import Any
 import pandas as pd
 
 
-def _validate_dataframe(dataframe: pd.DataFrame, name: str) -> None:
+def _validate_dataframe(
+    dataframe: pd.DataFrame,
+    name: str,
+) -> None:
     """Validate a dataframe used for cleaning comparisons."""
     if not isinstance(dataframe, pd.DataFrame):
-        raise TypeError(f"{name} must be a pandas DataFrame.")
+        raise TypeError(
+            f"{name} must be a pandas DataFrame."
+        )
 
     if dataframe.columns.duplicated().any():
         raise ValueError(
@@ -19,14 +24,20 @@ def _validate_dataframe(dataframe: pd.DataFrame, name: str) -> None:
         )
 
 
-def _safe_percentage(count: int, total: int) -> float:
+def _safe_percentage(
+    count: int,
+    total: int,
+) -> float:
     """Calculate a percentage safely."""
     if total == 0:
         return 0.0
+
     return float(count / total * 100)
 
 
-def _missing_summary(dataframe: pd.DataFrame) -> dict[str, Any]:
+def _missing_summary(
+    dataframe: pd.DataFrame,
+) -> dict[str, Any]:
     """Summarize missing values globally and by column."""
     missing_by_column = dataframe.isna().sum()
 
@@ -116,6 +127,10 @@ def _count_changed_cells(
             "comparison_method": "unavailable",
         }
 
+    # Reset indexes to prevent accidental alignment.
+    before = before.reset_index(drop=True)
+    after = after.reset_index(drop=True)
+
     comparable_cells = int(before.size)
 
     if comparable_cells == 0:
@@ -149,7 +164,6 @@ def generate_cleaning_report(
     cleaned: pd.DataFrame,
 ) -> dict[str, Any]:
     """Generate a structured audit report comparing two datasets."""
-
     _validate_dataframe(original, "original")
     _validate_dataframe(cleaned, "cleaned")
 
@@ -168,24 +182,27 @@ def generate_cleaning_report(
         if column not in original_columns
     ]
 
-    if original.index.is_unique and cleaned.index.is_unique:
+    if (
+        original.index.is_unique
+        and cleaned.index.is_unique
+    ):
         removed_indices = original.index.difference(
             cleaned.index
         )
+
         added_indices = cleaned.index.difference(
             original.index
         )
 
         row_comparison_method = "aligned_index"
-
         removed_rows = len(removed_indices)
         added_rows = len(added_indices)
-
     else:
         removed_rows = max(
             0,
             len(original) - len(cleaned),
         )
+
         added_rows = max(
             0,
             len(cleaned) - len(original),
@@ -251,8 +268,14 @@ def generate_cleaning_report(
             ),
         },
         "column_names": {
-            "before": [str(c) for c in original_columns],
-            "after": [str(c) for c in cleaned_columns],
+            "before": [
+                str(column)
+                for column in original_columns
+            ],
+            "after": [
+                str(column)
+                for column in cleaned_columns
+            ],
         },
     }
 
@@ -302,7 +325,9 @@ def cleaning_report_dataframe(
             {
                 "Metric": "Columns removed",
                 "Before": 0,
-                "After": len(changes["columns_removed"]),
+                "After": len(
+                    changes["columns_removed"]
+                ),
             },
             {
                 "Metric": "Changed cells",
