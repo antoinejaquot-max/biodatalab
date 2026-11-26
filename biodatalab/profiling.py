@@ -20,7 +20,6 @@ def profile_dataframe(
         raise ValueError("DataFrame contains duplicate column names.")
 
     row_count, column_count = dataframe.shape
-
     columns: dict[str, dict[str, Any]] = {}
 
     for column in dataframe.columns:
@@ -39,8 +38,11 @@ def profile_dataframe(
             "unique_count": int(non_missing.nunique()),
         }
 
-        if pd.api.types.is_numeric_dtype(series):
-            if len(non_missing) > 0:
+        if (
+            pd.api.types.is_numeric_dtype(series)
+            or non_missing.empty
+        ):
+            if len(non_missing) > 0 and pd.api.types.is_numeric_dtype(series):
                 info.update(
                     {
                         "mean": float(non_missing.mean()),
@@ -62,25 +64,23 @@ def profile_dataframe(
                 )
 
         else:
-            if len(non_missing) > 0:
-                mode = non_missing.mode()
-
-                info["most_frequent"] = (
-                    mode.iloc[0] if not mode.empty else None
-                )
-            else:
-                info["most_frequent"] = None
+            mode = non_missing.mode()
+            info["most_frequent"] = (
+                mode.iloc[0] if not mode.empty else None
+            )
 
         columns[str(column)] = info
+
+    total_missing = int(dataframe.isna().sum().sum())
 
     return {
         "shape": (row_count, column_count),
         "row_count": row_count,
         "column_count": column_count,
         "duplicate_rows": int(dataframe.duplicated().sum()),
-        "total_missing_values": int(dataframe.isna().sum().sum()),
+        "total_missing_values": total_missing,
         "total_missing_percentage": (
-            float(dataframe.isna().sum().sum() / dataframe.size * 100)
+            float(total_missing / dataframe.size * 100)
             if dataframe.size > 0
             else 0.0
         ),
