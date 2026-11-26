@@ -1,229 +1,263 @@
 
-"""Tests for dataset validation."""
+"""Dataset validation utilities for BioDataLab."""
+
+from __future__ import annotations
+
+from typing import Any
 
 import pandas as pd
-import pytest
-
-from biodatalab.validation import validate_dataframe
 
 
-def test_valid_dataframe():
-    df = pd.DataFrame({
-        "height": [10, 20, 30],
-        "species": ["A", "B", "C"],
-    })
+def validate_dataframe(
+    dataframe: pd.DataFrame,
+    rules: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Validate a dataframe against optional validation rules."""
 
-    result = validate_dataframe(
-        df,
-        {
-            "required_columns": ["height", "species"],
-            "columns": {
-                "height": {"type": "numeric", "min": 0},
-                "species": {"type": "string"},
-            },
+    if not isinstance(dataframe, pd.DataFrame):
+        raise TypeError("dataframe must be a pandas DataFrame.")
+
+    if dataframe.columns.duplicated().any():
+        raise ValueError("Duplicate column names are not allowed.")
+
+    rules = rules or {}
+    column_rules = rules.get("columns", {})
+    errors: list[dict[str, Any]] = []
+    warnings: list[dict[str, Any]] = []
+
+    def add_issue(
+        target: list[dict[str, Any]],
+        code: str,
+        message: str,
+        column: str | None = None,
+        rows: list[int] | None = None,
+    ) -> None:
+        issue: dict[str, Any] = {
+            "code": code,
+            "message": message,
+        }
+
+        if column is not None:
+            issue["column"] = column
+
+        if rows is not None:
+            issue["rows"] = rows
+
+        target.append(issue)
+
+    # Required columns
+    required_columns = rules.get("required_columns", [])
+
+    for column in required_columns:
+        if column not in dataframe.columns:
+            add_issue(
+                errors,
+                "missing_column",
+                f"Required column '{column}' is missing.",
+                column=column,
+            )
+
+    # Column-level validation
+    for column, config in column_rules.items():
+        if column not in dataframe.columns:
+            if column not in required_columns:
+                add_issue(
+                    errors,
+                    "missing_column",
+                    f"Validation column '{column}' is missing.",
+                    column=column,
+                )
+            continue
+
+        series = dataframe[column]
+
+        # Nullability
+        if config.get("nullable", True) is False:
+            missing_rows = [
+                i
+                for i, value in enumerate(series)
+                if pd.isna(value)
+            ]
+
+            if missing_rows:
+                add_issue(
+                    errors,
+                    "null_values",
+                    f"Column '{column}' contains missing values.",
+                    column=column,
+                    rows=missing_rows,
+                )
+
+        # Type checks
+        expected_type = config.get("type")
+
+        if expected_type == "numeric":
+            invalid_rows = [
+                i
+                for i, value in enumerate(series)
+                if not pd.isna(value)
+                and (
+                    not isinstance(value, (int, float))
+                    or isinstance(value, bool)
+                )
+            ]
+
+        elif expected_type == "integer":
+            invalid_rows = [
+                i
+                for i, value in enumerate(series)
+                if not pd.isna(value)
+                and (
+                    not isinstance(value, (int, float))
+                    or isinstance(value, bool)
+                    or not float(value).is_integer()
+                )
+            ]
+
+        elif expected_type == "string":
+            invalid_rows = [
+                i
+                for i, value in enumerate(series)
+                if not pd.isna(value)
+                and not isinstance(value, str)
+            ]
+
+        elif expected_type == "boolean":
+            invalid_rows = [
+                i
+                for i, value in enumerate(series)
+                if not pd.isna(value)
+                and not isinstance(value, bool)
+            ]
+
+        else:
+            invalid_rows = []
+
+        if expected_type in (
+            "numeric",
+            "integer",
+            "string",
+            "boolean",
+        ) and invalid_rows:
+            add_issue(
+                errors,
+                "invalid_type",
+                f"Column '{column}' must contain {expected_type} values.",
+                column=column,
+                rows=invalid_rows,
+            )
+
+        # Numeric ranges
+        if "min" in config or "max" in config:
+            numeric = pd.to_numeric(
+                series,
+                errors="coerce",
+            )
+
+            non_numeric = series.notna() & numeric.isna()
+
+            if non_numeric.any():
+                add_issue(
+                    warnings,
+                    "range_check_skipped",
+                    f"Range validation for '{column}' skipped because non-numeric values are present.",
+                    column=column,
+                )
+            else:
+                below_min = (
+                    numeric < config["min"]
+                    if "min" in config
+                    else pd.Series(False, index=series.index)
+                )
+
+                above_max = (
+                    numeric > config["max"]
+                    if "max" in config
+                    else pd.Series(False, index=series.index)
+                )
+
+                out_of_range = below_min | above_max
+
+                rows = [
+                    i
+                    for i, value in enumerate(out_of_range)
+                    if value
+                ]
+
+                if rows:
+                    add_issue(
+                        errors,
+                        "out_of_range",
+                        f"Column '{column}' contains values outside the allowed range.",
+                        column=column,
+                        rows=rows,
+                    )
+
+        # Allowed values
+        if "allowed" in config:
+            allowed = config["allowed"]
+
+            invalid_rows = [
+                i
+                for i, value in enumerate(series)
+                if not pd.isna(value)
+                and value not in allowed
+            ]
+
+            if invalid_rows:
+                add_issue(
+                    errors,
+                    "invalid_value",
+                    f"Column '{column}' contains values outside the allowed set.",
+                    column=column,
+                    rows=invalid_rows,
+                )
+
+        # Uniqueness
+        if config.get("unique", False):
+            duplicated = series.duplicated(keep=False)
+
+            rows = [
+                i
+                for i, value in enumerate(duplicated)
+                if value
+            ]
+
+            if rows:
+                add_issue(
+                    errors,
+                    "duplicate_values",
+                    f"Column '{column}' contains duplicate values.",
+                    column=column,
+                    rows=rows,
+                )
+
+    # Duplicate rows
+    if rules.get("unique_rows", False):
+        duplicated_rows = dataframe.duplicated(keep=False)
+
+        rows = [
+            i
+            for i, value in enumerate(duplicated_rows)
+            if value
+        ]
+
+        if rows:
+            add_issue(
+                errors,
+                "duplicate_rows",
+                "Dataset contains duplicate rows.",
+                rows=rows,
+            )
+
+    return {
+        "valid": len(errors) == 0,
+        "errors": errors,
+        "warnings": warnings,
+        "summary": {
+            "total_rows": int(len(dataframe)),
+            "total_columns": int(dataframe.shape[1]),
+            "errors": int(len(errors)),
+            "warnings": int(len(warnings)),
         },
-    )
-
-    assert result["valid"] is True
-    assert result["summary"]["errors"] == 0
-
-
-def test_missing_required_column():
-    df = pd.DataFrame({"height": [10, 20]})
-
-    result = validate_dataframe(
-        df,
-        {"required_columns": ["height", "species"]},
-    )
-
-    assert result["valid"] is False
-    assert any(
-        error["code"] == "missing_column"
-        for error in result["errors"]
-    )
-
-
-def test_numeric_type_validation():
-    df = pd.DataFrame({"value": [1, "invalid", 3]})
-
-    result = validate_dataframe(
-        df,
-        {"columns": {"value": {"type": "numeric"}}},
-    )
-
-    assert result["valid"] is False
-    assert any(
-        error["code"] == "invalid_type"
-        for error in result["errors"]
-    )
-
-
-def test_integer_validation():
-    df = pd.DataFrame({"value": [1, 2.5, 3]})
-
-    result = validate_dataframe(
-        df,
-        {"columns": {"value": {"type": "integer"}}},
-    )
-
-    assert result["valid"] is False
-
-
-def test_string_validation():
-    df = pd.DataFrame({"value": ["a", 2, "c"]})
-
-    result = validate_dataframe(
-        df,
-        {"columns": {"value": {"type": "string"}}},
-    )
-
-    assert result["valid"] is False
-
-
-def test_boolean_validation():
-    df = pd.DataFrame({"value": [True, False, 1]})
-
-    result = validate_dataframe(
-        df,
-        {"columns": {"value": {"type": "boolean"}}},
-    )
-
-    assert result["valid"] is False
-
-
-def test_minimum_value():
-    df = pd.DataFrame({"value": [-1, 2, 3]})
-
-    result = validate_dataframe(
-        df,
-        {"columns": {"value": {"min": 0}}},
-    )
-
-    assert result["valid"] is False
-    assert any(
-        error["code"] == "out_of_range"
-        for error in result["errors"]
-    )
-
-
-def test_maximum_value():
-    df = pd.DataFrame({"value": [1, 2, 101]})
-
-    result = validate_dataframe(
-        df,
-        {"columns": {"value": {"max": 100}}},
-    )
-
-    assert result["valid"] is False
-
-
-def test_allowed_values():
-    df = pd.DataFrame({"species": ["A", "B", "X"]})
-
-    result = validate_dataframe(
-        df,
-        {"columns": {"species": {"allowed": ["A", "B"]}}},
-    )
-
-    assert result["valid"] is False
-    assert any(
-        error["code"] == "invalid_value"
-        for error in result["errors"]
-    )
-
-
-def test_unique_column():
-    df = pd.DataFrame({"id": [1, 2, 2, 3]})
-
-    result = validate_dataframe(
-        df,
-        {"columns": {"id": {"unique": True}}},
-    )
-
-    assert result["valid"] is False
-    assert any(
-        error["code"] == "duplicate_values"
-        for error in result["errors"]
-    )
-
-
-def test_unique_rows():
-    df = pd.DataFrame({
-        "a": [1, 2, 2],
-        "b": [3, 4, 4],
-    })
-
-    result = validate_dataframe(
-        df,
-        {"unique_rows": True},
-    )
-
-    assert result["valid"] is False
-
-
-def test_non_nullable_column():
-    df = pd.DataFrame({"value": [1, None, 3]})
-
-    result = validate_dataframe(
-        df,
-        {"columns": {"value": {"nullable": False}}},
-    )
-
-    assert result["valid"] is False
-    assert any(
-        error["code"] == "null_values"
-        for error in result["errors"]
-    )
-
-
-def test_nullable_column():
-    df = pd.DataFrame({"value": [1, None, 3]})
-
-    result = validate_dataframe(
-        df,
-        {"columns": {"value": {"nullable": True}}},
-    )
-
-    assert result["valid"] is True
-
-
-def test_empty_dataframe():
-    df = pd.DataFrame(columns=["a", "b"])
-
-    result = validate_dataframe(df)
-
-    assert result["valid"] is True
-    assert result["summary"]["total_rows"] == 0
-
-
-def test_duplicate_column_names():
-    df = pd.DataFrame([[1, 2]], columns=["a", "a"])
-
-    with pytest.raises(ValueError):
-        validate_dataframe(df)
-
-
-def test_non_dataframe_input():
-    with pytest.raises(TypeError):
-        validate_dataframe([1, 2, 3])
-
-
-def test_no_rules():
-    df = pd.DataFrame({"a": [1, 2, 3]})
-
-    result = validate_dataframe(df)
-
-    assert result["valid"] is True
-    assert result["errors"] == []
-
-
-def test_invalid_range_with_non_numeric_values():
-    df = pd.DataFrame({"value": ["a", "b"]})
-
-    result = validate_dataframe(
-        df,
-        {"columns": {"value": {"min": 0}}},
-    )
-
-    assert result["valid"] is True
-    assert len(result["warnings"]) == 1
+    }
