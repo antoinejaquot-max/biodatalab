@@ -85,22 +85,18 @@ def logistic_regression(
     if np.any(x_values.std(axis=0) == 0):
         raise ValueError("Predictors must not have zero variance.")
 
-    # Standardize predictors for numerical stability.
     means = x_values.mean(axis=0)
     stds = x_values.std(axis=0)
-
     x_scaled = (x_values - means) / stds
 
-    # Add intercept.
     x = np.column_stack([np.ones(len(x_scaled)), x_scaled])
 
     coefficients = np.zeros(x.shape[1], dtype=float)
     converged = False
 
-    # Small ridge regularization stabilizes the Hessian.
     regularization = 1e-6
     penalty = np.eye(x.shape[1]) * regularization
-    penalty[0, 0] = 0.0  # Do not penalize the intercept.
+    penalty[0, 0] = 0.0
 
     for iteration in range(max_iter):
         linear_predictor = x @ coefficients
@@ -134,18 +130,27 @@ def logistic_regression(
 
     accuracy = float(np.mean(predictions == y_values))
 
-    odds_ratios = np.exp(np.clip(coefficients[1:], -500, 500))
+    odds_ratios = np.exp(np.clip(coefficients, -500, 500))
+
+    coefficient_table = pd.DataFrame(
+        {
+            "coefficient": coefficients,
+            "odds_ratio": odds_ratios,
+        },
+        index=["intercept"] + list(predictors.columns),
+    )
+
+    prediction_table = pd.DataFrame(
+        {
+            "prediction": predictions,
+            "probability": final_probabilities,
+        },
+        index=dataframe.index,
+    )
 
     return {
-        "coefficients": pd.Series(
-            coefficients,
-            index=["intercept"] + list(predictors.columns),
-        ),
-        "predictions": pd.Series(
-            predictions,
-            index=dataframe.index,
-            name="prediction",
-        ),
+        "coefficients": coefficient_table,
+        "predictions": prediction_table,
         "probabilities": pd.Series(
             final_probabilities,
             index=dataframe.index,
@@ -153,7 +158,7 @@ def logistic_regression(
         ),
         "accuracy": accuracy,
         "odds_ratios": pd.Series(
-            odds_ratios,
+            odds_ratios[1:],
             index=predictors.columns,
         ),
         "converged": converged,
