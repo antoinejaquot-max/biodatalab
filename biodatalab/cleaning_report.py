@@ -5,7 +5,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import numpy as np
 import pandas as pd
 
 
@@ -56,6 +55,13 @@ def _count_changed_cells(
 ) -> dict[str, Any]:
     """Count changed cells in comparable rows and columns."""
 
+    if original.size == 0 and cleaned.size == 0:
+        return {
+            "count": 0,
+            "comparable_cells": 0,
+            "comparison_method": "empty",
+        }
+
     common_columns = [
         column
         for column in original.columns
@@ -72,7 +78,6 @@ def _count_changed_cells(
     original_common = original[common_columns]
     cleaned_common = cleaned[common_columns]
 
-    # Align by index if both indices are unique.
     if (
         original_common.index.is_unique
         and cleaned_common.index.is_unique
@@ -87,8 +92,6 @@ def _count_changed_cells(
         method = "aligned_index"
 
     else:
-        # Positional comparison is used when duplicate indices
-        # prevent reliable label-based alignment.
         shared_rows = min(
             len(original_common),
             len(cleaned_common),
