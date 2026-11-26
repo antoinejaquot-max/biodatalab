@@ -1,7 +1,6 @@
 
-"""Tests for cleaning audit utilities."""
-
 import pandas as pd
+import pytest
 
 from biodatalab.cleaning_report import (
     cleaning_report_dataframe,
@@ -9,99 +8,98 @@ from biodatalab.cleaning_report import (
 )
 
 
-def test_report_detects_removed_rows_and_columns():
+def test_report_detects_removed_rows():
     original = pd.DataFrame(
-        {
-            "height": [10, 20, 30],
-            "unused": [None, None, None],
-        },
+        {"value": [1, 2, 3]},
         index=[0, 1, 2],
     )
+    cleaned = original.loc[[0, 2]]
 
-    cleaned = pd.DataFrame(
-        {"height": [10, 20]},
-        index=[0, 1],
-    )
-
-    report = generate_cleaning_report(
-        original,
-        cleaned,
-    )
+    report = generate_cleaning_report(original, cleaned)
 
     assert report["changes"]["rows_removed"] == 1
-    assert report["changes"]["columns_removed"] == [
-        "unused"
-    ]
+    assert report["changes"]["rows_added"] == 0
 
 
-def test_report_detects_missing_values():
+def test_report_detects_added_columns():
+    original = pd.DataFrame({"value": [1, 2]})
+    cleaned = original.assign(extra=[3, 4])
+
+    report = generate_cleaning_report(original, cleaned)
+
+    assert report["changes"]["columns_added"] == ["extra"]
+    assert report["changes"]["columns_removed"] == []
+
+
+def test_report_detects_removed_columns():
     original = pd.DataFrame(
-        {"values": [1, None, 3]}
+        {"value": [1, 2], "extra": [3, 4]}
     )
+    cleaned = original[["value"]]
 
-    cleaned = pd.DataFrame(
-        {"values": [1, 2, 3]}
-    )
+    report = generate_cleaning_report(original, cleaned)
 
-    report = generate_cleaning_report(
-        original,
-        cleaned,
-    )
-
-    assert report["missing_values"]["before"]["total"] == 1
-    assert report["missing_values"]["after"]["total"] == 0
-    assert report["missing_values"]["reduction"] == 1
+    assert report["changes"]["columns_removed"] == ["extra"]
 
 
 def test_report_detects_changed_cells():
-    original = pd.DataFrame(
-        {"values": [1, 2, 3]}
-    )
+    original = pd.DataFrame({"value": [1, 2, 3]})
+    cleaned = pd.DataFrame({"value": [1, 5, 3]})
 
-    cleaned = pd.DataFrame(
-        {"values": [1, 5, 3]}
-    )
-
-    report = generate_cleaning_report(
-        original,
-        cleaned,
-    )
+    report = generate_cleaning_report(original, cleaned)
 
     assert report["changes"]["cells_changed"] == 1
+    assert report["changes"]["comparable_cells"] == 3
 
 
-def test_report_detects_duplicate_rows():
+def test_report_handles_nan_equality():
+    original = pd.DataFrame({"value": [1, None, 3]})
+    cleaned = pd.DataFrame({"value": [1, None, 3]})
+
+    report = generate_cleaning_report(original, cleaned)
+
+    assert report["changes"]["cells_changed"] == 0
+
+
+def test_report_detects_missing_value_reduction():
     original = pd.DataFrame(
-        {"values": [1, 1, 2]}
+        {"a": [1, None, None], "b": [4, 5, None]}
     )
+    cleaned = original.fillna(0)
 
-    cleaned = pd.DataFrame(
-        {"values": [1, 2]}
-    )
+    report = generate_cleaning_report(original, cleaned)
 
-    report = generate_cleaning_report(
-        original,
-        cleaned,
-    )
+    assert report["missing_values"]["before"]["total"] == 3
+    assert report["missing_values"]["after"]["total"] == 0
+    assert report["missing_values"]["reduction"] == 3
+
+
+def test_report_detects_duplicate_reduction():
+    original = pd.DataFrame({"a": [1, 1, 2]})
+    cleaned = original.drop_duplicates()
+
+    report = generate_cleaning_report(original, cleaned)
 
     assert report["duplicates"]["before"] == 1
     assert report["duplicates"]["after"] == 0
 
 
-def test_report_dataframe():
-    original = pd.DataFrame(
-        {"values": [1, None, 3]}
-    )
+def test_report_handles_empty_dataframes():
+    original = pd.DataFrame()
+    cleaned = pd.DataFrame()
 
-    cleaned = pd.DataFrame(
-        {"values": [1, 2, 3]}
-    )
+    report = generate_cleaning_report(original, cleaned)
 
-    report = generate_cleaning_report(
-        original,
-        cleaned,
-    )
+    assert report["changes"]["cells_changed"] == 0
+    assert report["summary"]["original_rows"] == 0
+    assert report["summary"]["cleaned_rows"] == 0
 
+
+def test_report_dataframe_conversion():
+    original = pd.DataFrame({"a": [1, None, 3]})
+    cleaned = original.fillna(0)
+
+    report = generate_cleaning_report(original, cleaned)
     summary = cleaning_report_dataframe(report)
 
     assert isinstance(summary, pd.DataFrame)
@@ -110,36 +108,30 @@ def test_report_dataframe():
     assert "After" in summary.columns
 
 
-def test_report_handles_empty_dataframes():
-    original = pd.DataFrame()
-    cleaned = pd.DataFrame()
-
-    report = generate_cleaning_report(
-        original,
-        cleaned,
-    )
-
-    assert report["summary"]["original_rows"] == 0
-    assert report["changes"]["cells_changed"] == 0
+def test_report_rejects_non_dataframe():
+    with pytest.raises(TypeError):
+        generate_cleaning_report([], pd.DataFrame())
 
 
-def test_report_handles_duplicate_indices():
+def test_report_rejects_duplicate_columns():
+    original = pd.DataFrame([[1, 2]], columns=["a", "a"])
+    cleaned = pd.DataFrame({"a": [1]})
+
+    with pytest.raises(ValueError):
+        generate_cleaning_report(original, cleaned)
+
+
+def test_report_handles_different_indexes():
     original = pd.DataFrame(
-        {"values": [1, 2]},
-        index=[0, 0],
+        {"a": [1, 2]},
+        index=[10, 20],
     )
-
     cleaned = pd.DataFrame(
-        {"values": [1, 3]},
-        index=[0, 0],
+        {"a": [1, 2]},
+        index=[30, 40],
     )
 
-    report = generate_cleaning_report(
-        original,
-        cleaned,
-    )
+    report = generate_cleaning_report(original, cleaned)
 
-    assert report["changes"]["cell_comparison_method"] == (
-        "position"
-    )
-    assert report["changes"]["cells_changed"] == 1
+    assert report["changes"]["cells_changed"] == 0
+    assert report["changes"]["comparable_cells"] == 2
