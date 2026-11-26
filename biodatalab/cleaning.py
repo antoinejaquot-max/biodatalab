@@ -240,9 +240,8 @@ def fill_missing_categorical(
 
             value = modes.iloc[0]
 
-        if pd.api.types.is_categorical_dtype(
-            result[column]
-        ):
+        if isinstance(result[column].dtype, pd.CategoricalDtype):
+            
             if value not in result[column].cat.categories:
                 result[column] = result[column].cat.add_categories(
                     [value]
