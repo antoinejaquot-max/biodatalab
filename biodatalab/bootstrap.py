@@ -20,13 +20,13 @@ def bootstrap_ci(
     if not isinstance(n_resamples, int) or isinstance(n_resamples, bool):
         raise TypeError("n_resamples must be an integer.")
 
-    if n_resamples < 2:
-        raise ValueError("n_resamples must be at least 2.")
+    if n_resamples < 1:
+        raise ValueError("n_resamples must be at least 1.")
 
     if not isinstance(confidence_level, (int, float)):
         raise TypeError("confidence_level must be numeric.")
 
-    if not 0 < confidence_level < 1:
+    if not np.isfinite(confidence_level) or not 0 < confidence_level < 1:
         raise ValueError("confidence_level must be between 0 and 1.")
 
     if not callable(statistic):
@@ -89,8 +89,10 @@ def bootstrap_ci(
         np.quantile(bootstrap_statistics, 1 - alpha / 2)
     )
 
-    standard_error = float(
-        np.std(bootstrap_statistics, ddof=1)
+    standard_error = (
+        float(np.std(bootstrap_statistics, ddof=1))
+        if n_resamples > 1
+        else 0.0
     )
 
     return {
