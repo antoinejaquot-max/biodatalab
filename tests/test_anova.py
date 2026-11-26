@@ -3,6 +3,7 @@
 
 import numpy as np
 import pytest
+from scipy.stats import studentized_range
 
 from biodatalab.anova import (
     one_way_anova,
@@ -86,6 +87,16 @@ def test_welch_anova_returns_valid_p_value(experimental_groups):
     assert 0 <= result["p_value"] <= 1
 
 
+def test_welch_anova_rejects_zero_variance_group():
+    groups = {
+        "A": [1, 1, 1],
+        "B": [2, 3, 4],
+    }
+
+    with pytest.raises(ValueError):
+        one_way_anova(groups, equal_variances=False)
+
+
 # --------------------------------------------------
 # Tukey HSD
 # --------------------------------------------------
@@ -114,6 +125,11 @@ def test_tukey_hsd_confidence_intervals(experimental_groups):
         assert lower < upper
 
 
+def test_tukey_requires_two_groups():
+    with pytest.raises(ValueError):
+        tukey_hsd({"A": [1, 2, 3]})
+
+
 # --------------------------------------------------
 # Games-Howell
 # --------------------------------------------------
@@ -138,6 +154,92 @@ def test_games_howell_returns_degrees_of_freedom(experimental_groups):
 
     for comparison in result["comparisons"]:
         assert comparison["degrees_of_freedom"] > 0
+
+
+def test_games_howell_statistic_and_p_value_formula():
+    groups = {
+        "A": [1, 2, 4, 5, 7],
+        "B": [4, 8, 9, 10, 12, 15, 17],
+        "C": [3, 3, 6, 7, 8, 11],
+    }
+
+    alpha = 0.05
+    result = games_howell(groups, alpha=alpha)
+
+    comparison = result["comparisons"][0]
+
+    x = np.asarray(groups["A"], dtype=float)
+    y = np.asarray(groups["B"], dtype=float)
+
+    n1, n2 = len(x), len(y)
+
+    v1 = np.var(x, ddof=1) / n1
+    v2 = np.var(y, ddof=1) / n2
+
+    se = np.sqrt(v1 + v2)
+
+    df = (
+        (v1 + v2) ** 2
+        / (
+            v1**2 / (n1 - 1)
+            + v2**2 / (n2 - 1)
+        )
+    )
+
+    difference = np.mean(x) - np.mean(y)
+
+    q = abs(difference) * np.sqrt(2) / se
+
+    expected_p = studentized_range.sf(
+        q,
+        len(groups),
+        df,
+    )
+
+    critical = studentized_range.ppf(
+        1 - alpha,
+        len(groups),
+        df,
+    )
+
+    margin = critical * se / np.sqrt(2)
+
+    assert comparison["mean_difference"] == pytest.approx(
+        difference
+    )
+
+    assert comparison["p_value"] == pytest.approx(
+        expected_p,
+        rel=1e-10,
+    )
+
+    assert comparison["degrees_of_freedom"] == pytest.approx(
+        df,
+        rel=1e-10,
+    )
+
+    assert comparison["confidence_interval"] == pytest.approx(
+        [
+            difference - margin,
+            difference + margin,
+        ],
+        rel=1e-10,
+    )
+
+
+def test_games_howell_rejects_zero_combined_variance():
+    groups = {
+        "A": [1, 1, 1],
+        "B": [1, 1, 1],
+    }
+
+    with pytest.raises(ValueError):
+        games_howell(groups)
+
+
+def test_games_howell_requires_two_groups():
+    with pytest.raises(ValueError):
+        games_howell({"A": [1, 2, 3]})
 
 
 # --------------------------------------------------
@@ -172,14 +274,12 @@ def test_anova_rejects_infinite_values():
         })
 
 
-def test_tukey_requires_two_groups():
+def test_anova_rejects_identical_values():
     with pytest.raises(ValueError):
-        tukey_hsd({"A": [1, 2, 3]})
-
-
-def test_games_howell_requires_two_groups():
-    with pytest.raises(ValueError):
-        games_howell({"A": [1, 2, 3]})
+        one_way_anova({
+            "A": [5, 5, 5],
+            "B": [5, 5, 5],
+        })
 
 
 def test_anova_rejects_invalid_alpha():
@@ -190,4 +290,15 @@ def test_anova_rejects_invalid_alpha():
                 "B": [4, 5, 6],
             },
             alpha=0,
+        )
+
+
+def test_anova_rejects_nonfinite_alpha():
+    with pytest.raises(ValueError):
+        one_way_anova(
+            {
+                "A": [1, 2, 3],
+                "B": [4, 5, 6],
+            },
+            alpha=np.nan,
         )
